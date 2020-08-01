@@ -68,7 +68,11 @@ def link_customer_and_address(raw_billing_data, customer_name):
 	customer.customer_name = customer_name
 	customer.woocommerce_email = customer_woo_com_email
 	customer.flags.ignore_mandatory = True
-	customer.save() 
+	customer.save()
+
+	for fn in frappe.get_hooks("woocommerce_postprocess", {}).get("Customer", []):
+		customer = frappe.get_attr(fn)(customer_doc=customer)
+		customer.save()
 
 	if customer_exists:
 		frappe.rename_doc("Customer", old_name, customer_name)
@@ -101,17 +105,16 @@ def link_customer_and_address(raw_billing_data, customer_name):
 
 		frappe.rename_doc("Address", old_address_title, new_address_title)
 
+
 def link_items(items_list, woocommerce_settings, sys_lang):
 	for item_data in items_list:
 		item_woo_com_id = item_data.get("product_id")
 
 		if frappe.get_value("Item", {"woocommerce_id": item_woo_com_id}):
-			#Edit Item
 			item = frappe.get_doc("Item", {"woocommerce_id": item_woo_com_id})
 		else:
-			#Create Item
 			item = frappe.new_doc("Item")
-	
+
 		item.item_name = item_data.get("name")
 		item.item_code = _("woocommerce - {0}", sys_lang).format(item_data.get("product_id"))
 		item.woocommerce_id = item_data.get("product_id")
@@ -119,6 +122,11 @@ def link_items(items_list, woocommerce_settings, sys_lang):
 		item.stock_uom = woocommerce_settings.uom or _("Nos", sys_lang)
 		item.flags.ignore_mandatory = True
 		item.save()
+
+		for fn in frappe.get_hooks("woocommerce_postprocess", {}).get("Item", []):
+			item = frappe.get_attr(fn)(item_doc=item, item_data=item_data)
+			item.save()
+
 
 def create_sales_order(order, woocommerce_settings, customer_name, sys_lang):
 	new_sales_order = frappe.new_doc("Sales Order")
@@ -137,6 +145,11 @@ def create_sales_order(order, woocommerce_settings, customer_name, sys_lang):
 	set_items_in_sales_order(new_sales_order, woocommerce_settings, order, sys_lang)
 	new_sales_order.flags.ignore_mandatory = True
 	new_sales_order.insert()
+
+	for fn in frappe.get_hooks("woocommerce_postprocess", {}).get("Sales Order", []):
+		new_sales_order = frappe.get_attr(fn)(order_doc=new_sales_order, order_data=order)
+		new_sales_order.save()
+
 	new_sales_order.submit()
 
 	frappe.db.commit()
@@ -171,7 +184,7 @@ def set_items_in_sales_order(new_sales_order, woocommerce_settings, order, sys_l
 
 	add_tax_details(new_sales_order, order.get("shipping_tax"), "Shipping Tax", woocommerce_settings.f_n_f_account)
 	add_tax_details(new_sales_order, order.get("shipping_total"), "Shipping Total", woocommerce_settings.f_n_f_account)
-			
+
 def add_tax_details(sales_order, price, desc, tax_account_head):
 	sales_order.append("taxes", {
 		"charge_type":"Actual",
