@@ -14,6 +14,7 @@ from frappe.utils import add_months, formatdate, getdate, today
 
 from plaid.errors import ItemError
 
+
 class PlaidSettings(Document):
 	@staticmethod
 	@frappe.whitelist()
@@ -158,6 +159,7 @@ def add_account_subtype(account_subtype):
 def sync_transactions(bank, bank_account):
 	"""Sync transactions based on the last integration date as the start date, after sync is completed
 	add the transaction date of the oldest transaction as the last integration date."""
+
 	last_transaction_date = frappe.db.get_value("Bank Account", bank_account, "last_integration_date")
 	if last_transaction_date:
 		start_date = formatdate(last_transaction_date, "YYYY-MM-dd")
@@ -205,6 +207,7 @@ def get_transactions(bank, bank_account=None, start_date=None, end_date=None):
 			frappe.log_error(msg, title=_("Plaid Link Refresh Required"))
 
 	return transactions or []
+
 
 
 def new_bank_transaction(transaction):
