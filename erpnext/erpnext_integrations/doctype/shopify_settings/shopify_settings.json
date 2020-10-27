@@ -2,44 +2,44 @@
  "creation": "2015-05-18 05:21:07.270859",
  "doctype": "DocType",
  "document_type": "System",
+ "engine": "InnoDB",
  "field_order": [
   "status_html",
   "enable_shopify",
-  "app_type",
   "column_break_4",
+  "app_type",
   "last_sync_datetime",
-  "section_break_2",
+  "sb_shopify",
   "shopify_url",
   "api_key",
-  "column_break_3",
+  "cb_shopify",
   "password",
   "shared_secret",
   "access_token",
-  "section_break_38",
+  "sb_webhook",
   "webhooks",
-  "section_break_15",
+  "sb_customer",
   "default_customer",
-  "column_break_19",
+  "cb_customer",
   "customer_group",
-  "company_dependent_settings",
+  "sb_company",
   "company",
   "cash_bank_account",
-  "column_break_20",
+  "cb_company",
   "cost_center",
-  "erp_settings",
+  "sb_transactions",
   "price_list",
   "update_price_in_erpnext_price_list",
-  "column_break_26",
+  "cb_transactions",
   "warehouse",
-  "section_break_25",
+  "sb_naming_series",
   "sales_order_series",
-  "column_break_27",
   "sync_delivery_note",
-  "delivery_note_series",
   "sync_sales_invoice",
+  "cb_naming_series",
+  "delivery_note_series",
   "sales_invoice_series",
-  "section_break_22",
-  "html_16",
+  "sb_tax_accounts",
   "taxes"
  ],
  "fields": [
@@ -75,10 +75,6 @@
    "read_only": 1
   },
   {
-   "fieldname": "section_break_2",
-   "fieldtype": "Section Break"
-  },
-  {
    "description": "eg: frappe.myshopify.com",
    "fieldname": "shopify_url",
    "fieldtype": "Data",
@@ -91,10 +87,6 @@
    "fieldname": "api_key",
    "fieldtype": "Data",
    "label": "API Key"
-  },
-  {
-   "fieldname": "column_break_3",
-   "fieldtype": "Column Break"
   },
   {
    "depends_on": "eval:doc.app_type==\"Private\"",
@@ -115,22 +107,11 @@
    "read_only": 1
   },
   {
-   "collapsible": 1,
-   "fieldname": "section_break_38",
-   "fieldtype": "Section Break",
-   "label": "Webhooks Details"
-  },
-  {
    "fieldname": "webhooks",
    "fieldtype": "Table",
    "label": "Webhooks",
    "options": "Shopify Webhook Detail",
    "read_only": 1
-  },
-  {
-   "fieldname": "section_break_15",
-   "fieldtype": "Section Break",
-   "label": "Customer Settings"
   },
   {
    "description": "If Shopify does not have a customer in the order, then while syncing the orders, the system will consider the default customer for the order",
@@ -140,19 +121,11 @@
    "options": "Customer"
   },
   {
-   "fieldname": "column_break_19",
-   "fieldtype": "Column Break"
-  },
-  {
    "description": "Customer Group will set to selected group while syncing customers from Shopify",
    "fieldname": "customer_group",
    "fieldtype": "Link",
    "label": "Customer Group",
    "options": "Customer Group"
-  },
-  {
-   "fieldname": "company_dependent_settings",
-   "fieldtype": "Section Break"
   },
   {
    "fieldname": "company",
@@ -168,18 +141,10 @@
    "options": "Account"
   },
   {
-   "fieldname": "column_break_20",
-   "fieldtype": "Column Break"
-  },
-  {
    "fieldname": "cost_center",
    "fieldtype": "Link",
    "label": "Cost Center",
    "options": "Cost Center"
-  },
-  {
-   "fieldname": "erp_settings",
-   "fieldtype": "Section Break"
   },
   {
    "fieldname": "price_list",
@@ -194,10 +159,6 @@
    "label": "Update Price from Shopify To ERPNext Price List"
   },
   {
-   "fieldname": "column_break_26",
-   "fieldtype": "Column Break"
-  },
-  {
    "description": "Default Warehouse to to create Sales Order and Delivery Note",
    "fieldname": "warehouse",
    "fieldtype": "Link",
@@ -205,17 +166,9 @@
    "options": "Warehouse"
   },
   {
-   "fieldname": "section_break_25",
-   "fieldtype": "Section Break"
-  },
-  {
    "fieldname": "sales_order_series",
    "fieldtype": "Select",
    "label": "Sales Order Series"
-  },
-  {
-   "fieldname": "column_break_27",
-   "fieldtype": "Column Break"
   },
   {
    "default": "0",
@@ -242,24 +195,70 @@
    "label": "Sales Invoice Series"
   },
   {
-   "fieldname": "section_break_22",
-   "fieldtype": "Section Break"
-  },
-  {
-   "fieldname": "html_16",
-   "fieldtype": "HTML",
-   "options": "Map Shopify Taxes / Shipping Charges to ERPNext Account"
-  },
-  {
    "fieldname": "taxes",
    "fieldtype": "Table",
    "label": "Shopify Tax Account",
    "options": "Shopify Tax Account"
+  },
+  {
+   "fieldname": "sb_shopify",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "cb_shopify",
+   "fieldtype": "Column Break"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "sb_webhook",
+   "fieldtype": "Section Break",
+   "label": "Webhooks Details"
+  },
+  {
+   "fieldname": "sb_customer",
+   "fieldtype": "Section Break",
+   "label": "Customer Settings"
+  },
+  {
+   "fieldname": "cb_customer",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sb_company",
+   "fieldtype": "Section Break",
+   "label": "Company Defaults"
+  },
+  {
+   "fieldname": "cb_company",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sb_transactions",
+   "fieldtype": "Section Break",
+   "label": "Transaction Defaults"
+  },
+  {
+   "fieldname": "cb_transactions",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sb_naming_series",
+   "fieldtype": "Section Break",
+   "label": "Naming Series"
+  },
+  {
+   "fieldname": "cb_naming_series",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "sb_tax_accounts",
+   "fieldtype": "Section Break",
+   "label": "Map Shopify Taxes / Shipping Charges to ERPNext Account"
   }
  ],
  "issingle": 1,
- "modified": "2020-05-28 12:32:11.384757",
- "modified_by": "umair@erpnext.com",
+ "modified": "2020-10-27 05:11:58.655362",
+ "modified_by": "Administrator",
  "module": "ERPNext Integrations",
  "name": "Shopify Settings",
  "owner": "Administrator",
