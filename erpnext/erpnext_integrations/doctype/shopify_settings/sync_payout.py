@@ -1,9 +1,14 @@
-from requests.exceptions import HTTPError
+import shopify
+from shopify import ShopifyResource
 
 import frappe
 from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log
-from erpnext.erpnext_integrations.doctype.shopify_settings.shopify_settings import API_VERSION, get_headers, get_shopify_url
-from frappe.utils import get_request_session, now
+from frappe.utils import now
+
+
+class Payouts(ShopifyResource):
+	# temporary class until Shopify adds it to their library
+	_prefix_source = "/shopify_payments/"
 
 
 def sync_payout_from_shopify():
@@ -15,23 +20,14 @@ def sync_payout_from_shopify():
 	if not shopify_settings.enable_shopify:
 		return
 
-	url = get_shopify_url(f"admin/api/{API_VERSION}/shopify_payments/payouts.json", shopify_settings)
-	session = get_request_session()
-	params = {
-		"date_min": shopify_settings.last_sync_datetime
-	}
-
-	try:
-		res = session.get(url, params=params, headers=get_headers(shopify_settings))
-		res.raise_for_status()
-	except HTTPError as e:
-		error_message = res.json().get("errors", e)
-		make_shopify_log(status="Warning", exception=error_message)
-	except Exception as e:
-		make_shopify_log(status="Error", exception=e)
-		return
-
-	payouts = res.json().get("payouts")
+	with shopify_settings.get_shopify_session(temp=True):
+		try:
+			payouts = Payouts.find(
+				date_min=shopify_settings.last_sync_datetime
+			)
+		except Exception as e:
+			make_shopify_log(status="Error", exception=e, rollback=True)
+			return
 
 	for payout in payouts:
 		# TODO: sync payout

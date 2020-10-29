@@ -1,24 +1,20 @@
+import shopify
+
 import frappe
 from erpnext import get_default_company
-from erpnext.erpnext_integrations.doctype.shopify_settings.shopify_settings import API_VERSION, get_headers, get_shopify_url
 from frappe import _
-from frappe.utils import cint, cstr, get_request_session
+from frappe.utils import cint, cstr
 
 SHOPIFY_VARIANTS_ATTR_LIST = ["option1", "option2", "option3"]
 
 
 def sync_item_from_shopify(shopify_settings, item):
-	url = get_shopify_url(f"admin/api/{API_VERSION}/products/{item.get('product_id')}.json", shopify_settings)
-	session = get_request_session()
-
-	try:
-		res = session.get(url, headers=get_headers(shopify_settings))
-		res.raise_for_status()
-
-		shopify_item = res.json()["product"]
-		make_item(shopify_settings.warehouse, shopify_item)
-	except Exception as e:
-		raise e
+	with shopify_settings.get_shopify_session(temp=True):
+		try:
+			product = shopify.Product.find(item.get('product_id'))
+			make_item(shopify_settings.warehouse, product.to_dict())
+		except Exception as e:
+			raise e
 
 
 def make_item(warehouse, shopify_item):

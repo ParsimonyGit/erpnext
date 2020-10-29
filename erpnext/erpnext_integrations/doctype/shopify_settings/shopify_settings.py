@@ -2,9 +2,7 @@
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-import json
-
-from requests.exceptions import HTTPError
+import shopify
 
 import frappe
 from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log
@@ -12,84 +10,72 @@ from erpnext.erpnext_integrations.utils import get_webhook_address
 from frappe import _
 from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
 from frappe.model.document import Document
-from frappe.utils import get_request_session
-
-API_VERSION = "2020-10"
-WEBHOOK_TOPICS = ["orders/create", "orders/paid", "orders/fulfilled"]
 
 
 class ShopifySettings(Document):
+	api_version = "2020-10"
+	webhook_topics = ["orders/create", "orders/paid", "orders/fulfilled"]
+
+	def get_shopify_session(self, temp=False):
+		if temp:
+			return shopify.Session.temp(self.shopify_url, self.api_version, self.get_password("password"))
+		return shopify.Session(self.shopify_url, self.api_version, self.get_password("password"))
+
 	def validate(self):
 		if self.enable_shopify == 1:
 			setup_custom_fields()
 			self.validate_access_credentials()
-			self.register_webhooks()
-		else:
-			self.unregister_webhooks()
+
+		self.update_webhooks()
 
 	def validate_access_credentials(self):
 		if not all([self.get_password("password", raise_exception=False), self.api_key, self.shopify_url]):
 			frappe.throw(_("Missing value for Password, API Key or Shopify URL"))
 
-	def register_webhooks(self):
-		url = get_shopify_url(f"admin/api/{API_VERSION}/webhooks.json", self)
-		session = get_request_session()
+	def update_webhooks(self):
+		with self.get_shopify_session(temp=True):
+			if self.enable_shopify == 1:
+				self.register_webhooks()
+			else:
+				self.unregister_webhooks()
 
-		for topic in WEBHOOK_TOPICS:
-			try:
-				res = session.post(url, data=json.dumps({
-					"webhook": {
-						"topic": topic,
-						"address": get_webhook_address(connector_name="shopify_connection", method="store_request_data"),
-						"format": "json"
-					}
-				}), headers=get_headers(self))
-				res.raise_for_status()
-				self.update_webhook_table(topic, res.json())
-			except HTTPError as e:
-				error_message = res.json().get("errors", e)
-				make_shopify_log(status="Warning", exception=error_message, rollback=True)
-			except Exception as e:
-				make_shopify_log(status="Warning", exception=e, rollback=True)
+	def register_webhooks(self):
+		for topic in self.webhook_topics:
+			if shopify.Webhook.find(topic=topic):
+				continue
+
+			webhook = shopify.Webhook.create({
+				"topic": topic,
+				"address": get_webhook_address(connector_name="shopify_connection", method="store_request_data"),
+				"format": "json"
+			})
+
+			if webhook.is_valid:
+				self.append("webhooks", {
+					"webhook_id": webhook.id,
+					"method": webhook.topic
+				})
+			else:
+				make_shopify_log(status="Error", exception=webhook.errors.full_messages(), rollback=True)
 
 	def unregister_webhooks(self):
-		session = get_request_session()
 		deleted_webhooks = []
-
 		for d in self.webhooks:
-			url = get_shopify_url(f"admin/api/{API_VERSION}/webhooks/{d.webhook_id}.json", self)
-			try:
-				res = session.delete(url, headers=get_headers(self))
-				res.raise_for_status()
+			if not shopify.Webhook.exists(d.webhook_id):
 				deleted_webhooks.append(d)
-			except HTTPError as e:
-				error_message = res.json().get("errors", e)
-				make_shopify_log(status="Warning", exception=error_message, rollback=True)
+				continue
+
+			try:
+				webhook = shopify.Webhook.find(d.webhook_id)
+				webhook.destroy()
 			except Exception as e:
-				make_shopify_log(status="Warning", exception=e, rollback=True)
+				make_shopify_log(status="Error", exception=e, rollback=True)
 				frappe.log_error(message=e, title="Shopify Webhooks Deletion Issue")
+			else:
+				deleted_webhooks.append(d)
 
 		for d in deleted_webhooks:
 			self.remove(d)
-
-	def update_webhook_table(self, topic, res):
-		self.append("webhooks", {
-			"webhook_id": res["webhook"]["id"],
-			"method": topic
-		})
-
-
-def get_shopify_url(path, settings):
-	return f"https://{settings.shopify_url}/{path}"
-
-
-def get_headers(settings):
-	headers = {
-		"Content-Type": "application/json",
-		"X-Shopify-Access-Token": settings.get_password("password")
-	}
-
-	return headers
 
 
 @frappe.whitelist()
