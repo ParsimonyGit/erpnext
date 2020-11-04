@@ -9,6 +9,7 @@ from erpnext.erpnext_integrations.doctype.shopify_settings.sync_product import s
 from erpnext.erpnext_integrations.doctype.shopify_settings.sync_customer import create_customer
 from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log, dump_request_data
 
+
 @frappe.whitelist(allow_guest=True)
 @validate_webhooks_request("Shopify Settings", 'X-Shopify-Hmac-Sha256', secret_key='shared_secret')
 def store_request_data(order=None, event=None):
@@ -17,6 +18,7 @@ def store_request_data(order=None, event=None):
 		event = frappe.request.headers.get('X-Shopify-Topic')
 
 	dump_request_data(order, event)
+
 
 def sync_sales_order(order, request_id=None):
 	frappe.set_user('Administrator')
@@ -34,6 +36,7 @@ def sync_sales_order(order, request_id=None):
 		else:
 			make_shopify_log(status="Success")
 
+
 def prepare_sales_invoice(order, request_id=None):
 	frappe.set_user('Administrator')
 	shopify_settings = frappe.get_doc("Shopify Settings")
@@ -46,6 +49,7 @@ def prepare_sales_invoice(order, request_id=None):
 			make_shopify_log(status="Success")
 	except Exception as e:
 		make_shopify_log(status="Error", exception=e, rollback=True)
+
 
 def prepare_delivery_note(order, request_id=None):
 	frappe.set_user('Administrator')
@@ -60,11 +64,13 @@ def prepare_delivery_note(order, request_id=None):
 	except Exception as e:
 		make_shopify_log(status="Error", exception=e, rollback=True)
 
+
 def get_sales_order(shopify_order_id):
 	sales_order = frappe.db.get_value("Sales Order", filters={"shopify_order_id": shopify_order_id})
 	if sales_order:
 		so = frappe.get_doc("Sales Order", sales_order)
 		return so
+
 
 def validate_customer(order, shopify_settings):
 	customer_id = order.get("customer", {}).get("id")
@@ -72,10 +78,12 @@ def validate_customer(order, shopify_settings):
 		if not frappe.db.get_value("Customer", {"shopify_customer_id": customer_id}, "name"):
 			create_customer(order.get("customer"), shopify_settings)
 
+
 def validate_item(order, shopify_settings):
 	for item in order.get("line_items"):
 		if item.get("product_id") and not frappe.db.get_value("Item", {"shopify_product_id": item.get("product_id")}, "name"):
 			sync_item_from_shopify(shopify_settings, item)
+
 
 def create_order(order, shopify_settings, company=None):
 	so = create_sales_order(order, shopify_settings, company)
@@ -85,6 +93,7 @@ def create_order(order, shopify_settings, company=None):
 
 		if order.get("fulfillments"):
 			create_delivery_note(order, shopify_settings, so)
+
 
 def create_sales_order(shopify_order, shopify_settings, company=None):
 	product_not_exists = []
@@ -132,9 +141,10 @@ def create_sales_order(shopify_order, shopify_settings, company=None):
 	frappe.db.commit()
 	return so
 
+
 def create_sales_invoice(shopify_order, shopify_settings, so):
 	if not frappe.db.get_value("Sales Invoice", {"shopify_order_id": shopify_order.get("id")}, "name")\
-		and so.docstatus==1 and not so.per_billed and cint(shopify_settings.sync_sales_invoice):
+		and so.docstatus == 1 and not so.per_billed and cint(shopify_settings.sync_sales_invoice):
 
 		si = make_sales_invoice(so.name, ignore_permissions=True)
 		si.shopify_order_id = shopify_order.get("id")
@@ -143,21 +153,24 @@ def create_sales_invoice(shopify_order, shopify_settings, so):
 		set_cost_center(si.items, shopify_settings.cost_center)
 		si.insert(ignore_mandatory=True)
 		si.submit()
-		make_payament_entry_against_sales_invoice(si, shopify_settings)
+		make_payment_entry_against_sales_invoice(si, shopify_settings)
 		frappe.db.commit()
+
 
 def set_cost_center(items, cost_center):
 	for item in items:
 		item.cost_center = cost_center
 
-def make_payament_entry_against_sales_invoice(doc, shopify_settings):
+
+def make_payment_entry_against_sales_invoice(doc, shopify_settings):
 	from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
-	payemnt_entry = get_payment_entry(doc.doctype, doc.name, bank_account=shopify_settings.cash_bank_account)
-	payemnt_entry.flags.ignore_mandatory = True
-	payemnt_entry.reference_no = doc.name
-	payemnt_entry.reference_date = nowdate()
-	payemnt_entry.insert(ignore_permissions=True)
-	payemnt_entry.submit()
+	payment_entry = get_payment_entry(doc.doctype, doc.name, bank_account=shopify_settings.cash_bank_account)
+	payment_entry.flags.ignore_mandatory = True
+	payment_entry.reference_no = doc.name
+	payment_entry.reference_date = nowdate()
+	payment_entry.insert(ignore_permissions=True)
+	payment_entry.submit()
+
 
 def create_delivery_note(shopify_order, shopify_settings, so):
 	if not cint(shopify_settings.sync_delivery_note):
@@ -165,7 +178,7 @@ def create_delivery_note(shopify_order, shopify_settings, so):
 
 	for fulfillment in shopify_order.get("fulfillments"):
 		if not frappe.db.get_value("Delivery Note", {"shopify_fulfillment_id": fulfillment.get("id")}, "name")\
-			and so.docstatus==1:
+			and so.docstatus == 1:
 
 			dn = make_delivery_note(so.name)
 			dn.shopify_order_id = fulfillment.get("order_id")
@@ -177,15 +190,18 @@ def create_delivery_note(shopify_order, shopify_settings, so):
 			dn.submit()
 			frappe.db.commit()
 
+
 def get_fulfillment_items(dn_items, fulfillment_items, shopify_settings):
-	return [dn_item.update({"qty": item.get("quantity")}) for item in fulfillment_items for dn_item in dn_items\
-			if get_item_code(item) == dn_item.item_code]
+	return [dn_item.update({"qty": item.get("quantity")}) for item in fulfillment_items for dn_item in dn_items
+		if get_item_code(item) == dn_item.item_code]
+
 
 def get_discounted_amount(order):
 	discounted_amount = 0.0
 	for discount in order.get("discount_codes"):
 		discounted_amount += flt(discount.get("amount"))
 	return discounted_amount
+
 
 def get_order_items(order_items, shopify_settings):
 	items = []
@@ -195,7 +211,7 @@ def get_order_items(order_items, shopify_settings):
 	for shopify_item in order_items:
 		if not shopify_item.get('product_exists'):
 			all_product_exists = False
-			product_not_exists.append({'title':shopify_item.get('title'),
+			product_not_exists.append({'title': shopify_item.get('title'),
 				'shopify_order_id': shopify_item.get('id')})
 			continue
 
@@ -215,6 +231,7 @@ def get_order_items(order_items, shopify_settings):
 
 	return items
 
+
 def get_item_code(shopify_item):
 	item_code = frappe.db.get_value("Item", {"shopify_variant_id": shopify_item.get("variant_id")}, "item_code")
 	if not item_code:
@@ -223,6 +240,7 @@ def get_item_code(shopify_item):
 		item_code = frappe.db.get_value("Item", {"item_name": shopify_item.get("title")}, "item_code")
 
 	return item_code
+
 
 def get_order_taxes(shopify_order, shopify_settings):
 	taxes = []
@@ -240,6 +258,7 @@ def get_order_taxes(shopify_order, shopify_settings):
 
 	return taxes
 
+
 def update_taxes_with_shipping_lines(taxes, shipping_lines, shopify_settings):
 	"""Shipping lines represents the shipping details,
 		each such shipping detail consists of a list of tax_lines"""
@@ -255,10 +274,11 @@ def update_taxes_with_shipping_lines(taxes, shipping_lines, shopify_settings):
 
 	return taxes
 
+
 def get_tax_account_head(tax):
 	tax_title = tax.get("title").encode("utf-8")
 
-	tax_account =  frappe.db.get_value("Shopify Tax Account", \
+	tax_account = frappe.db.get_value("Shopify Tax Account",
 		{"parent": "Shopify Settings", "shopify_tax": tax_title}, "tax_account")
 
 	if not tax_account:
