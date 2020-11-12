@@ -1,13 +1,15 @@
-from __future__ import unicode_literals
-import frappe
-from frappe import _
 import json
-from frappe.utils import cstr, cint, nowdate, flt
+
+from shopify import Order, PaginatedIterator
+
+import frappe
+from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import dump_request_data, make_shopify_log
+from erpnext.erpnext_integrations.doctype.shopify_settings.sync_customer import create_customer
+from erpnext.erpnext_integrations.doctype.shopify_settings.sync_product import make_item
 from erpnext.erpnext_integrations.utils import validate_webhooks_request
 from erpnext.selling.doctype.sales_order.sales_order import make_delivery_note, make_sales_invoice
-from erpnext.erpnext_integrations.doctype.shopify_settings.sync_product import sync_item_from_shopify
-from erpnext.erpnext_integrations.doctype.shopify_settings.sync_customer import create_customer
-from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log, dump_request_data
+from frappe import _
+from frappe.utils import cint, cstr, flt, nowdate
 
 
 @frappe.whitelist(allow_guest=True)
@@ -20,9 +22,40 @@ def store_request_data(order=None, event=None):
 	dump_request_data(order, event)
 
 
+@frappe.whitelist()
+def sync_sales_orders():
+	shopify_settings = frappe.get_single("Shopify Settings")
+	if not shopify_settings.enable_shopify:
+		return
+
+	kwargs = dict(status="any")
+	# if shopify_settings.last_sync_datetime:
+	# 	kwargs['updated_at_min'] = shopify_settings.last_sync_datetime
+
+	with shopify_settings.get_shopify_session(temp=True):
+		try:
+			shopify_orders = PaginatedIterator(Order.find(**kwargs))
+		except Exception as e:
+			make_shopify_log(status="Error", exception=e, rollback=True)
+		else:
+			frappe.enqueue(method=_bulk_sync_sales_orders, queue='long',
+				is_async=True, **{"shopify_orders": shopify_orders})
+
+
+def _bulk_sync_sales_orders(shopify_orders):
+	for page in shopify_orders:
+		for order in page:
+			_sync_sales_order(order.to_dict())
+
+
 def sync_sales_order(order, request_id=None):
 	frappe.set_user('Administrator')
-	shopify_settings = frappe.get_doc("Shopify Settings")
+	frappe.flags.request_id = request_id
+	_sync_sales_order(order, request_id)
+
+
+def _sync_sales_order(order, request_id=None):
+	shopify_settings = frappe.get_single("Shopify Settings")
 	frappe.flags.request_id = request_id
 
 	if not frappe.db.get_value("Sales Order", filters={"shopify_order_id": cstr(order['id'])}):
@@ -32,7 +65,6 @@ def sync_sales_order(order, request_id=None):
 			create_order(order, shopify_settings)
 		except Exception as e:
 			make_shopify_log(status="Error", exception=e)
-
 		else:
 			make_shopify_log(status="Success")
 
@@ -82,7 +114,7 @@ def validate_customer(order, shopify_settings):
 def validate_item(order, shopify_settings):
 	for item in order.get("line_items"):
 		if item.get("product_id") and not frappe.db.get_value("Item", {"shopify_product_id": item.get("product_id")}, "name"):
-			sync_item_from_shopify(shopify_settings, item)
+			make_item(shopify_settings.warehouse, item)
 
 
 def create_order(order, shopify_settings, company=None):
@@ -96,19 +128,16 @@ def create_order(order, shopify_settings, company=None):
 
 
 def create_sales_order(shopify_order, shopify_settings, company=None):
-	product_not_exists = []
 	customer = frappe.db.get_value("Customer", {"shopify_customer_id": shopify_order.get("customer", {}).get("id")}, "name")
 	so = frappe.db.get_value("Sales Order", {"shopify_order_id": shopify_order.get("id")}, "name")
 
 	if not so:
-		items = get_order_items(shopify_order.get("line_items"), shopify_settings)
+		items, missing_items = get_order_items(shopify_order.get("line_items"), shopify_settings)
 
 		if not items:
 			message = 'Following items exists in the shopify order but relevant records were not found in the shopify Product master'
-			message += "\n" + ", ".join(product_not_exists)
-
+			message += "\n" + ", ".join([item.get("title") for item in missing_items])
 			make_shopify_log(status="Error", exception=message, rollback=True)
-
 			return ''
 
 		so = frappe.get_doc({
@@ -184,15 +213,15 @@ def create_delivery_note(shopify_order, shopify_settings, so):
 			dn.shopify_order_id = fulfillment.get("order_id")
 			dn.shopify_fulfillment_id = fulfillment.get("id")
 			dn.naming_series = shopify_settings.delivery_note_series or "DN-Shopify-"
-			dn.items = get_fulfillment_items(dn.items, fulfillment.get("line_items"), shopify_settings)
+			dn.items = get_fulfillment_items(dn.items, fulfillment.get("line_items"))
 			dn.flags.ignore_mandatory = True
 			dn.save()
 			dn.submit()
 			frappe.db.commit()
 
 
-def get_fulfillment_items(dn_items, fulfillment_items, shopify_settings):
-	return [dn_item.update({"qty": item.get("quantity")}) for item in fulfillment_items for dn_item in dn_items
+def get_fulfillment_items(dn_items, fulfillment_items):
+	return [dn_item.update({"qty": item.get("quantity"), "allow_zero_valuation_rate": 1}) for item in fulfillment_items for dn_item in dn_items
 		if get_item_code(item) == dn_item.item_code]
 
 
@@ -205,17 +234,16 @@ def get_discounted_amount(order):
 
 def get_order_items(order_items, shopify_settings):
 	items = []
-	all_product_exists = True
-	product_not_exists = []
+	all_products_exist = True
+	missing_items = []
 
 	for shopify_item in order_items:
 		if not shopify_item.get('product_exists'):
-			all_product_exists = False
-			product_not_exists.append({'title': shopify_item.get('title'),
-				'shopify_order_id': shopify_item.get('id')})
+			all_products_exist = False
+			missing_items.append(shopify_item)
 			continue
 
-		if all_product_exists:
+		if all_products_exist:
 			item_code = get_item_code(shopify_item)
 			items.append({
 				"item_code": item_code,
@@ -229,7 +257,7 @@ def get_order_items(order_items, shopify_settings):
 		else:
 			items = []
 
-	return items
+	return items, missing_items
 
 
 def get_item_code(shopify_item):

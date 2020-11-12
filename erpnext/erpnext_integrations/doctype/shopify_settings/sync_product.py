@@ -1,20 +1,45 @@
-import shopify
+from shopify import Product, PaginatedIterator
 
 import frappe
 from erpnext import get_default_company
+from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log
 from frappe import _
 from frappe.utils import cint, cstr
 
 SHOPIFY_VARIANTS_ATTR_LIST = ["option1", "option2", "option3"]
 
+# Weight units gathered from:
+# https://shopify.dev/docs/admin-api/graphql/reference/products-and-collections/weightunit
+WEIGHT_UOM_MAP = {
+	"g": "Gram",
+	"kg": "Kg",
+	"oz": "Ounce",
+	"lb": "Pound"
+}
 
-def sync_item_from_shopify(shopify_settings, item):
+
+@frappe.whitelist()
+def sync_items_from_shopify():
+	shopify_settings = frappe.get_single("Shopify Settings")
+	if not shopify_settings.enable_shopify:
+		return
+
 	with shopify_settings.get_shopify_session(temp=True):
 		try:
-			product = shopify.Product.find(item.get('product_id'))
-			make_item(shopify_settings.warehouse, product.to_dict())
+			shopify_items = PaginatedIterator(Product.find())
 		except Exception as e:
-			raise e
+			make_shopify_log(status="Error", exception=e, rollback=True)
+		else:
+			frappe.enqueue(method=sync_item_from_shopify, queue='long', is_async=True,
+				**{"shopify_items": shopify_items, "shopify_settings": shopify_settings})
+
+	return True
+
+
+def sync_item_from_shopify(shopify_items, shopify_settings):
+	for page in shopify_items:
+		for shopify_item in page:
+			make_item(shopify_settings.warehouse, shopify_item.to_dict())
 
 
 def make_item(warehouse, shopify_item):
@@ -104,11 +129,11 @@ def create_item(shopify_item, warehouse, has_variant=0, attributes=None, variant
 		"item_group": get_item_group(shopify_item.get("product_type")),
 		"has_variants": has_variant,
 		"attributes": attributes or [],
-		"stock_uom": shopify_item.get("uom") or _("Nos"),
+		"stock_uom": WEIGHT_UOM_MAP.get(shopify_item.get("uom")) or _("Nos"),
 		"stock_keeping_unit": shopify_item.get("sku") or get_sku(shopify_item),
 		"default_warehouse": warehouse,
 		"image": get_item_image(shopify_item),
-		"weight_uom": shopify_item.get("weight_unit"),
+		"weight_uom": WEIGHT_UOM_MAP.get(shopify_item.get("weight_unit")),
 		"weight_per_unit": shopify_item.get("weight"),
 		"default_supplier": get_supplier(shopify_item),
 		"item_defaults": [

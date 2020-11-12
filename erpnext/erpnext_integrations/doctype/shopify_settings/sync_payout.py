@@ -6,22 +6,26 @@ from frappe.utils import now
 
 
 class Payouts(ShopifyResource):
-	# temporary class until Shopify adds it to their library
+	# temporary class until https://github.com/Shopify/shopify_python_api/pull/431 is merged
 	_prefix_source = "/shopify_payments/"
 
 
 class Transactions(ShopifyResource):
-	# temporary class until Shopify adds it to their library
+	# temporary class until https://github.com/Shopify/shopify_python_api/pull/431 is merged
 	_prefix_source = "/shopify_payments/balance/"
 
 
 def get_payouts(shopify_settings):
+	# kwargs = dict()
+	# if shopify_settings.last_sync_datetime:
+	# 	kwargs['date_min'] = shopify_settings.last_sync_datetime
+
 	try:
-		payouts = Payouts.find(
-			date_min=shopify_settings.last_sync_datetime
-		)
+		# payouts = Payouts.find(**kwargs)
+		payouts = Payouts.find()
 	except Exception as e:
 		make_shopify_log(status="Error", exception=e, rollback=True)
+		return []
 	else:
 		return payouts
 
@@ -30,6 +34,7 @@ def get_shopify_invoice(order_id):
 	return frappe.db.get_value("Sales Invoice", {"docstatus": 1, "shopify_order_id": order_id}, "name")
 
 
+@frappe.whitelist()
 def sync_payout_from_shopify():
 	"""
 	Pull and sync payouts from Shopify Payments transactions with existing orders
