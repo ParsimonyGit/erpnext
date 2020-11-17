@@ -28,8 +28,11 @@ def make_shopify_log(status="Queued", response_data=None, exception=None, rollba
 	else:
 		log = frappe.get_doc("Shopify Log", frappe.flags.request_id)
 
+	if not isinstance(response_data, str):
+		response_data = json.dumps(response_data, sort_keys=True, indent=4)
+
 	log.message = get_message(exception)
-	log.response_data = json.dumps(response_data) if not isinstance(response_data, str) else response_data
+	log.response_data = response_data
 	log.traceback = frappe.get_traceback()
 	log.status = status
 	log.save(ignore_permissions=True)

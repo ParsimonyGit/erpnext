@@ -54,11 +54,12 @@
   {
    "fieldname": "response_data",
    "fieldtype": "Code",
-   "label": "Response Data"
+   "label": "Response Data",
+   "read_only": 1
   }
  ],
  "in_create": 1,
- "modified": "2020-11-17 02:46:29.903637",
+ "modified": "2020-11-17 04:37:16.270762",
  "modified_by": "Administrator",
  "module": "ERPNext Integrations",
  "name": "Shopify Log",
