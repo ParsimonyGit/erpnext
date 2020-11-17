@@ -227,6 +227,8 @@ def create_delivery_note(shopify_order, shopify_settings, so):
 
 
 def get_fulfillment_items(dn_items, fulfillment_items):
+	# TODO: figure out a better way to add items without
+	# setting valuation rate to zero
 	return [dn_item.update({"qty": item.get("quantity"), "allow_zero_valuation_rate": 1}) for item in fulfillment_items for dn_item in dn_items
 		if get_item_code(item) == dn_item.item_code]
 
