@@ -38,11 +38,16 @@ def sync_sales_orders():
 		except Exception as e:
 			make_shopify_log(status="Error", exception=e, rollback=True)
 		else:
-			frappe.enqueue(method=_bulk_sync_sales_orders, queue='long',
-				is_async=True, **{"shopify_orders": shopify_orders})
+			bulk_sync_sales_orders(shopify_orders)
+
+			# TODO: figure out pickling error that occurs trying to enqueue
+			# the bulk-sync sales order function
+
+			# frappe.enqueue(method=bulk_sync_sales_orders, queue='long',
+			# 	is_async=True, **{"shopify_orders": shopify_orders})
 
 
-def _bulk_sync_sales_orders(shopify_orders):
+def bulk_sync_sales_orders(shopify_orders):
 	for page in shopify_orders:
 		for order in page:
 			_sync_sales_order(order.to_dict())
@@ -64,7 +69,7 @@ def _sync_sales_order(order, request_id=None):
 			validate_item(order, shopify_settings)
 			create_order(order, shopify_settings)
 		except Exception as e:
-			make_shopify_log(status="Error", exception=e)
+			make_shopify_log(status="Error", response_data=order, exception=e)
 		else:
 			make_shopify_log(status="Success")
 
@@ -80,7 +85,7 @@ def prepare_sales_invoice(order, request_id=None):
 			create_sales_invoice(order, shopify_settings, sales_order)
 			make_shopify_log(status="Success")
 	except Exception as e:
-		make_shopify_log(status="Error", exception=e, rollback=True)
+		make_shopify_log(status="Error", response_data=order, exception=e, rollback=True)
 
 
 def prepare_delivery_note(order, request_id=None):
@@ -94,7 +99,7 @@ def prepare_delivery_note(order, request_id=None):
 			create_delivery_note(order, shopify_settings, sales_order)
 		make_shopify_log(status="Success")
 	except Exception as e:
-		make_shopify_log(status="Error", exception=e, rollback=True)
+		make_shopify_log(status="Error", response_data=order, exception=e, rollback=True)
 
 
 def get_sales_order(shopify_order_id):
@@ -137,7 +142,8 @@ def create_sales_order(shopify_order, shopify_settings, company=None):
 		if not items:
 			message = 'Following items exists in the shopify order but relevant records were not found in the shopify Product master'
 			message += "\n" + ", ".join([item.get("title") for item in missing_items])
-			make_shopify_log(status="Error", exception=message, rollback=True)
+			make_shopify_log(status="Error", response_data=shopify_order.to_dict(),
+				exception=message, rollback=True)
 			return ''
 
 		so = frappe.get_doc({

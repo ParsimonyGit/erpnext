@@ -1,4 +1,4 @@
-from shopify import ShopifyResource
+from shopify import PaginatedIterator, ShopifyResource
 
 import frappe
 from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log
@@ -16,13 +16,12 @@ class Transactions(ShopifyResource):
 
 
 def get_payouts(shopify_settings):
-	# kwargs = dict()
+	kwargs = dict(status="paid")
 	# if shopify_settings.last_sync_datetime:
 	# 	kwargs['date_min'] = shopify_settings.last_sync_datetime
 
 	try:
-		# payouts = Payouts.find(**kwargs)
-		payouts = Payouts.find()
+		payouts = PaginatedIterator(Payouts.find(**kwargs))
 	except Exception as e:
 		make_shopify_log(status="Error", exception=e, rollback=True)
 		return []
@@ -46,11 +45,25 @@ def sync_payout_from_shopify():
 
 	with shopify_settings.get_shopify_session(temp=True):
 		payouts = get_payouts(shopify_settings)
-		for payout in payouts:
+		_sync_payout(payouts)
+
+		# TODO: figure out pickling error that occurs trying to enqueue
+		# the sync payout function
+
+		# frappe.enqueue(method=_sync_payout, queue='long', is_async=True,
+		# 	**{"payouts": payouts})
+
+	shopify_settings.last_sync_datetime = now()
+	shopify_settings.save()
+
+
+def _sync_payout(payouts):
+	for page in payouts:
+		for payout in page:
 			try:
 				payout_transactions = Transactions.find(payout_id=payout.id)
 			except Exception as e:
-				make_shopify_log(status="Error", exception=e, rollback=True)
+				make_shopify_log(status="Error", response_data=payout.to_dict(), exception=e, rollback=True)
 				continue
 
 			for transaction in payout_transactions:
@@ -62,6 +75,3 @@ def sync_payout_from_shopify():
 				else:
 					# TODO: add the fees and charges to the existing invoice
 					pass
-
-	shopify_settings.last_sync_datetime = now()
-	shopify_settings.save()

@@ -13,7 +13,7 @@ class ShopifyLog(Document):
 	pass
 
 
-def make_shopify_log(status="Queued", exception=None, rollback=False):
+def make_shopify_log(status="Queued", response_data=None, exception=None, rollback=False):
 	# if name not provided by log calling method then fetch existing queued state log
 	make_new = False
 
@@ -29,6 +29,7 @@ def make_shopify_log(status="Queued", exception=None, rollback=False):
 		log = frappe.get_doc("Shopify Log", frappe.flags.request_id)
 
 	log.message = get_message(exception)
+	log.response_data = json.dumps(response_data) if not isinstance(response_data, str) else response_data
 	log.traceback = frappe.get_traceback()
 	log.status = status
 	log.save(ignore_permissions=True)
