@@ -45,7 +45,7 @@ frappe.ui.form.on("Shopify Settings", {
 
 		frm.add_custom_button(__("Orders"), function () {
 			frappe.call({
-				method: "erpnext.erpnext_integrations.connectors.shopify_connection.sync_sales_orders",
+				method: "erpnext.erpnext_integrations.doctype.shopify_settings.sync_order.sync_orders_from_shopify",
 				freeze: true,
 				callback: function (r) {
 					if (r.message) {
@@ -57,7 +57,7 @@ frappe.ui.form.on("Shopify Settings", {
 
 		frm.add_custom_button(__("Payouts"), function() {
 			frappe.call({
-				method: "erpnext.erpnext_integrations.doctype.shopify_settings.sync_payout.sync_payout_from_shopify",
+				method: "erpnext.erpnext_integrations.doctype.shopify_settings.sync_payout.sync_payouts_from_shopify",
 				freeze: true,
 				callback: function(r) {
 					if (r.message) {

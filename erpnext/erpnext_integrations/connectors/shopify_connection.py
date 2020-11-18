@@ -1,7 +1,5 @@
 import json
 
-from shopify import Order, PaginatedIterator
-
 import frappe
 from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import dump_request_data, make_shopify_log
 from erpnext.erpnext_integrations.doctype.shopify_settings.sync_customer import create_customer
@@ -22,44 +20,27 @@ def store_request_data(order=None, event=None):
 	dump_request_data(order, event)
 
 
-@frappe.whitelist()
-def sync_sales_orders():
-	shopify_settings = frappe.get_single("Shopify Settings")
-	if not shopify_settings.enable_shopify:
-		return
-
-	kwargs = dict(status="any")
-	# if shopify_settings.last_sync_datetime:
-	# 	kwargs['updated_at_min'] = shopify_settings.last_sync_datetime
-
-	with shopify_settings.get_shopify_session(temp=True):
-		try:
-			shopify_orders = PaginatedIterator(Order.find(**kwargs))
-		except Exception as e:
-			make_shopify_log(status="Error", exception=e, rollback=True)
-		else:
-			bulk_sync_sales_orders(shopify_orders)
-
-			# TODO: figure out pickling error that occurs trying to enqueue
-			# the bulk-sync sales order function
-
-			# frappe.enqueue(method=bulk_sync_sales_orders, queue='long',
-			# 	is_async=True, **{"shopify_orders": shopify_orders})
-
-
-def bulk_sync_sales_orders(shopify_orders):
-	for page in shopify_orders:
-		for order in page:
-			_sync_sales_order(order.to_dict())
-
-
 def sync_sales_order(order, request_id=None):
 	frappe.set_user('Administrator')
 	frappe.flags.request_id = request_id
-	_sync_sales_order(order, request_id)
+	sync_shopify_order(order, request_id)
 
 
-def _sync_sales_order(order, request_id=None):
+def sync_shopify_order(order, request_id=None):
+	"""
+	Create the following from a Shopify order:
+
+		- Sales Order
+		- Sales Invoice and Payment Entry (if paid)
+		- Delivery Note (if fulfilled)
+
+	Args:
+
+		order (dict): The Shopify order data
+		request_id (str, optional): The ID of the existing Shopify Log document
+			for this request. Defaults to None.
+	"""
+
 	shopify_settings = frappe.get_single("Shopify Settings")
 	frappe.flags.request_id = request_id
 
@@ -71,7 +52,7 @@ def _sync_sales_order(order, request_id=None):
 		except Exception as e:
 			make_shopify_log(status="Error", response_data=order, exception=e)
 		else:
-			make_shopify_log(status="Success")
+			make_shopify_log(status="Success", response_data=order)
 
 
 def prepare_sales_invoice(order, request_id=None):
@@ -83,7 +64,7 @@ def prepare_sales_invoice(order, request_id=None):
 		sales_order = get_sales_order(cstr(order['id']))
 		if sales_order:
 			create_sales_invoice(order, shopify_settings, sales_order)
-			make_shopify_log(status="Success")
+			make_shopify_log(status="Success", response_data=order)
 	except Exception as e:
 		make_shopify_log(status="Error", response_data=order, exception=e, rollback=True)
 
@@ -97,7 +78,7 @@ def prepare_delivery_note(order, request_id=None):
 		sales_order = get_sales_order(cstr(order['id']))
 		if sales_order:
 			create_delivery_note(order, shopify_settings, sales_order)
-		make_shopify_log(status="Success")
+		make_shopify_log(status="Success", response_data=order)
 	except Exception as e:
 		make_shopify_log(status="Error", response_data=order, exception=e, rollback=True)
 
@@ -144,7 +125,7 @@ def create_sales_order(shopify_order, shopify_settings, company=None):
 			message += "\n" + ", ".join([item.get("title") for item in missing_items])
 			make_shopify_log(status="Error", response_data=shopify_order,
 				exception=message, rollback=True)
-			return ''
+			return
 
 		so = frappe.get_doc({
 			"doctype": "Sales Order",
@@ -229,15 +210,13 @@ def create_delivery_note(shopify_order, shopify_settings, so):
 def get_fulfillment_items(dn_items, fulfillment_items):
 	# TODO: figure out a better way to add items without
 	# setting valuation rate to zero
-	return [dn_item.update({"qty": item.get("quantity"), "allow_zero_valuation_rate": 1}) for item in fulfillment_items for dn_item in dn_items
+	return [dn_item.update({"qty": item.get("quantity"), "allow_zero_valuation_rate": 1})
+		for item in fulfillment_items for dn_item in dn_items
 		if get_item_code(item) == dn_item.item_code]
 
 
 def get_discounted_amount(order):
-	discounted_amount = 0.0
-	for discount in order.get("discount_codes"):
-		discounted_amount += flt(discount.get("amount"))
-	return discounted_amount
+	return sum(flt(discount.get("amount")) for discount in order.get("discount_codes"))
 
 
 def get_order_items(order_items, shopify_settings):

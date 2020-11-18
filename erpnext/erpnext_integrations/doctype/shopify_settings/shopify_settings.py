@@ -2,7 +2,8 @@
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-import shopify
+import contextlib
+from shopify import Session, Webhook
 
 import frappe
 from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log
@@ -17,12 +18,17 @@ class ShopifySettings(Document):
 	webhook_topics = ["orders/create", "orders/paid", "orders/fulfilled"]
 
 	def get_shopify_session(self, temp=False):
+		if not self.enable_shopify:
+			# a no-op session manager in case Shopify is disabled
+			return contextlib.suppress()
+
+		args = (self.shopify_url, self.api_version, self.get_password("password"))
 		if temp:
-			return shopify.Session.temp(self.shopify_url, self.api_version, self.get_password("password"))
-		return shopify.Session(self.shopify_url, self.api_version, self.get_password("password"))
+			return Session.temp(*args)
+		return Session(*args)
 
 	def validate(self):
-		if self.enable_shopify == 1:
+		if self.enable_shopify:
 			setup_custom_fields()
 			self.validate_access_credentials()
 
@@ -34,39 +40,40 @@ class ShopifySettings(Document):
 
 	def update_webhooks(self):
 		with self.get_shopify_session(temp=True):
-			if self.enable_shopify == 1:
+			if self.enable_shopify:
 				self.register_webhooks()
 			else:
 				self.unregister_webhooks()
 
 	def register_webhooks(self):
 		for topic in self.webhook_topics:
-			if shopify.Webhook.find(topic=topic):
+			if Webhook.find(topic=topic):
 				continue
 
-			webhook = shopify.Webhook.create({
+			webhook = Webhook.create({
 				"topic": topic,
 				"address": get_webhook_address(connector_name="shopify_connection", method="store_request_data"),
 				"format": "json"
 			})
 
-			if webhook.is_valid:
+			if webhook.is_valid():
 				self.append("webhooks", {
 					"webhook_id": webhook.id,
 					"method": webhook.topic
 				})
 			else:
-				make_shopify_log(status="Error", exception=webhook.errors.full_messages(), rollback=True)
+				make_shopify_log(status="Error", response_data=webhook.to_dict(),
+					exception=webhook.errors.full_messages(), rollback=True)
 
 	def unregister_webhooks(self):
 		deleted_webhooks = []
 		for d in self.webhooks:
-			if not shopify.Webhook.exists(d.webhook_id):
+			if not Webhook.exists(d.webhook_id):
 				deleted_webhooks.append(d)
 				continue
 
 			try:
-				webhook = shopify.Webhook.find(d.webhook_id)
+				webhook = Webhook.find(d.webhook_id)
 				webhook.destroy()
 			except Exception as e:
 				make_shopify_log(status="Error", exception=e, rollback=True)
