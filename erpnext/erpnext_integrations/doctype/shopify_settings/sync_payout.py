@@ -93,6 +93,7 @@ def _sync_payout(payouts):
 		invoice_returned = frappe.db.get_value("Sales Invoice", invoice, "status") in ["Return",
 			"Credit Note Issued"]
 
+		# check if order items have been fully returned
 		if order_fully_refunded and not invoice_returned:
 			return_invoice = make_sales_return(invoice)
 			return_invoice.save()

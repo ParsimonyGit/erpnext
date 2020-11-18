@@ -83,6 +83,21 @@ def prepare_delivery_note(order, request_id=None):
 		make_shopify_log(status="Error", response_data=order, exception=e, rollback=True)
 
 
+def cancel_shopify_order(order, request_id=None):
+	frappe.set_user('Administrator')
+	frappe.flags.request_id = request_id
+
+	doctypes = ["Delivery Note", "Sales Invoice", "Sales Order"]
+	for doctype in doctypes:
+		name = frappe.get_value(doctype, {"docstatus": 1, "shopify_order_id": cstr(order['id'])})
+		if name:
+			try:
+				frappe.get_doc(doctype, name).cancel()
+			except Exception as e:
+				make_shopify_log(status="Error", response_data=order,
+					exception=e, rollback=True)
+
+
 def get_sales_order(shopify_order_id):
 	sales_order = frappe.db.get_value("Sales Order", filters={"shopify_order_id": shopify_order_id})
 	if sales_order:
