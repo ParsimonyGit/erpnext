@@ -49,19 +49,23 @@ def make_item(warehouse, shopify_item):
 		attributes = create_attribute(shopify_item)
 		create_item(shopify_item, warehouse, 1, attributes)
 		create_item_variants(shopify_item, warehouse, attributes)
-
 	else:
-		shopify_item["variant_id"] = shopify_item['variants'][0]["id"]
+		variants = shopify_item.get('variants', [])
+		if len(variants) > 0:
+			shopify_item["variant_id"] = variants[0]["id"]
 		create_item(shopify_item, warehouse)
 
 
 def add_item_weight(shopify_item):
-	shopify_item["weight"] = shopify_item['variants'][0]["weight"]
-	shopify_item["weight_unit"] = shopify_item['variants'][0]["weight_unit"]
+	variants = shopify_item.get('variants', [])
+	if len(variants) > 0:
+		shopify_item["weight"] = variants[0]["weight"]
+		shopify_item["weight_unit"] = variants[0]["weight_unit"]
 
 
 def has_variants(shopify_item):
-	if len(shopify_item.get("options")) >= 1 and "Default Title" not in shopify_item.get("options")[0]["values"]:
+	options = shopify_item.get("options", [])
+	if len(options) > 0 and "Default Title" not in options[0]["values"]:
 		return True
 	return False
 
@@ -117,8 +121,9 @@ def set_new_attribute_values(item_attr, values):
 def create_item(shopify_item, warehouse, has_variant=0, attributes=None, variant_of=None):
 	item_dict = {
 		"doctype": "Item",
-		"shopify_product_id": shopify_item.get("id"),
+		"shopify_product_id": shopify_item.get("product_id") or shopify_item.get("id"),
 		"shopify_variant_id": shopify_item.get("variant_id"),
+		"disabled_on_shopify": not shopify_item.get("product_exists"),
 		"variant_of": variant_of,
 		"sync_with_shopify": 1,
 		"is_stock_item": 1,
@@ -166,7 +171,7 @@ def create_item_variants(shopify_item, warehouse, attributes):
 		fieldname=["name", "stock_uom"], as_dict=True)
 
 	if template_item:
-		for variant in shopify_item.get("variants"):
+		for variant in shopify_item.get("variants", []):
 			shopify_item_variant = {
 				"id": variant.get("id"),
 				"item_code": variant.get("id"),
@@ -226,16 +231,23 @@ def add_to_price_list(item, name):
 	item_price_name = frappe.db.get_value("Item Price",
 		{"item_code": name, "price_list": shopify_settings.price_list}, "name")
 
+	rate = 0
+	variants = item.get("variants", [])
+	if item.get("item_price"):
+		rate = item.get("item_price")
+	elif variants and len(variants) > 0:
+		rate = variants[0].get("price")
+
 	if not item_price_name:
 		frappe.get_doc({
 			"doctype": "Item Price",
 			"price_list": shopify_settings.price_list,
 			"item_code": name,
-			"price_list_rate": item.get("item_price") or item.get("variants")[0].get("price")
+			"price_list_rate": rate
 		}).insert()
 	else:
 		item_rate = frappe.get_doc("Item Price", item_price_name)
-		item_rate.price_list_rate = item.get("item_price") or item.get("variants")[0].get("price")
+		item_rate.price_list_rate = rate
 		item_rate.save()
 
 

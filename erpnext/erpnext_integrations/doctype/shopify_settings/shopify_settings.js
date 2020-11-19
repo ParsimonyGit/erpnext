@@ -48,9 +48,10 @@ frappe.ui.form.on("Shopify Settings", {
 				method: "erpnext.erpnext_integrations.doctype.shopify_settings.sync_order.sync_orders_from_shopify",
 				freeze: true,
 				callback: function (r) {
-					if (r.message) {
-						frappe.msgprint(__("Order sync has been queued. This may take a few minutes."));
-					}
+					// TODO: re-enable when the server-side enqueue is working
+					// if (r.message) {
+					// 	frappe.msgprint(__("Order sync has been queued. This may take a few minutes."));
+					// }
 				}
 			})
 		}, __("Sync"))

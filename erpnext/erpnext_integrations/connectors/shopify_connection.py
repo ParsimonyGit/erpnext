@@ -44,7 +44,7 @@ def sync_shopify_order(order, request_id=None):
 	shopify_settings = frappe.get_single("Shopify Settings")
 	frappe.flags.request_id = request_id
 
-	if not frappe.db.get_value("Sales Order", filters={"shopify_order_id": cstr(order['id'])}):
+	if not frappe.db.get_value("Sales Order", filters={"docstatus": ["<", 2], "shopify_order_id": cstr(order['id'])}):
 		try:
 			validate_customer(order, shopify_settings)
 			validate_item(order, shopify_settings)
@@ -89,7 +89,7 @@ def cancel_shopify_order(order, request_id=None):
 
 	doctypes = ["Delivery Note", "Sales Invoice", "Sales Order"]
 	for doctype in doctypes:
-		name = frappe.get_value(doctype, {"docstatus": 1, "shopify_order_id": cstr(order['id'])})
+		name = frappe.db.get_value(doctype, {"docstatus": 1, "shopify_order_id": cstr(order['id'])})
 		if name:
 			try:
 				frappe.get_doc(doctype, name).cancel()
@@ -114,7 +114,8 @@ def validate_customer(order, shopify_settings):
 
 def validate_item(order, shopify_settings):
 	for item in order.get("line_items"):
-		if item.get("product_id") and not frappe.db.get_value("Item", {"shopify_product_id": item.get("product_id")}, "name"):
+		product_id = item.get("product_id") or item.get("id")
+		if product_id and not frappe.db.exists("Item", {"shopify_product_id": product_id}):
 			make_item(shopify_settings.warehouse, item)
 
 
@@ -130,17 +131,10 @@ def create_order(order, shopify_settings, company=None):
 
 def create_sales_order(shopify_order, shopify_settings, company=None):
 	customer = frappe.db.get_value("Customer", {"shopify_customer_id": shopify_order.get("customer", {}).get("id")}, "name")
-	so = frappe.db.get_value("Sales Order", {"shopify_order_id": shopify_order.get("id")}, "name")
+	so = frappe.db.get_value("Sales Order", {"docstatus": ["<", 2], "shopify_order_id": shopify_order.get("id")}, "name")
 
 	if not so:
-		items, missing_items = get_order_items(shopify_order.get("line_items"), shopify_settings)
-
-		if not items:
-			message = 'Following items exists in the shopify order but relevant records were not found in the shopify Product master'
-			message += "\n" + ", ".join([item.get("title") for item in missing_items])
-			make_shopify_log(status="Error", response_data=shopify_order,
-				exception=message, rollback=True)
-			return
+		items = get_order_items(shopify_order.get("line_items"), shopify_settings)
 
 		so = frappe.get_doc({
 			"doctype": "Sales Order",
@@ -236,36 +230,25 @@ def get_discounted_amount(order):
 
 def get_order_items(order_items, shopify_settings):
 	items = []
-	all_products_exist = True
-	missing_items = []
-
 	for shopify_item in order_items:
-		if not shopify_item.get('product_exists'):
-			all_products_exist = False
-			missing_items.append(shopify_item)
-			continue
-
-		if all_products_exist:
-			item_code = get_item_code(shopify_item)
-			items.append({
-				"item_code": item_code,
-				"item_name": shopify_item.get("name"),
-				"rate": shopify_item.get("price"),
-				"delivery_date": nowdate(),
-				"qty": shopify_item.get("quantity"),
-				"stock_uom": shopify_item.get("uom") or _("Nos"),
-				"warehouse": shopify_settings.warehouse
-			})
-		else:
-			items = []
-
-	return items, missing_items
+		item_code = get_item_code(shopify_item)
+		items.append({
+			"item_code": item_code,
+			"item_name": shopify_item.get("name"),
+			"rate": shopify_item.get("price"),
+			"delivery_date": nowdate(),
+			"qty": shopify_item.get("quantity"),
+			"stock_uom": shopify_item.get("uom") or _("Nos"),
+			"warehouse": shopify_settings.warehouse
+		})
+	return items
 
 
 def get_item_code(shopify_item):
 	item_code = frappe.db.get_value("Item", {"shopify_variant_id": shopify_item.get("variant_id")}, "item_code")
 	if not item_code:
-		item_code = frappe.db.get_value("Item", {"shopify_product_id": shopify_item.get("product_id")}, "item_code")
+		item_code = frappe.db.get_value("Item",
+			{"shopify_product_id": shopify_item.get("product_id") or shopify_item.get("id")}, "item_code")
 	if not item_code:
 		item_code = frappe.db.get_value("Item", {"item_name": shopify_item.get("title")}, "item_code")
 

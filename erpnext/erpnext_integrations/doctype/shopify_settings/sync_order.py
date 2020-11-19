@@ -27,7 +27,7 @@ def sync_orders_from_shopify():
 			# the bulk-sync sales order function
 
 			# frappe.enqueue(method=bulk_sync_shopify_orders, queue='long',
-			# 	is_async=True, **{"shopify_orders": shopify_orders})
+			# 	**{"shopify_orders": shopify_orders})
 
 	return True
 
