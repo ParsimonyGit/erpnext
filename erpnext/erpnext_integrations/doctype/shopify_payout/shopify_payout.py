@@ -12,21 +12,42 @@ from erpnext.erpnext_integrations.connectors.shopify_connection import sync_shop
 from erpnext.erpnext_integrations.doctype.shopify_settings.sync_payout import (
 	Payouts, create_or_update_shopify_payout, get_shopify_document)
 from frappe.model.document import Document
+from frappe.utils import cint
 
 
 class ShopifyPayout(Document):
+	settings = frappe.get_single("Shopify Settings")
+
 	def before_submit(self):
-		self.update_shopify_payout()
+		"""
+		Before submitting a Payout, check the following:
+
+			- Update the Payout with the latest info from Shopify (WIP)
+			- Create missing order documents for any Shopify Order
+		"""
+
+		# self.update_shopify_payout()
 		self.create_missing_orders()
 
 	def on_submit(self):
-		self.update_cancelled_orders()
-		self.create_sales_returns()
-		self.create_journal_entry()
+		"""
+		On submit of a Payout, do the following:
 
-	def update_shopify_payout(self):
-		payout = Payouts.find(self.payout_id)
-		create_or_update_shopify_payout(payout, payout_doc=self)
+			- If a Shopify Order is cancelled, update all linked documents in ERPNext
+			- If a Shopify Order has been fully returned, make a sales return in ERPNext
+			- Create a Journal Entry to balance all existing transactions
+				with additional fees and charges from Shopify, if any
+		"""
+
+		self.update_cancelled_shopify_orders()
+		self.create_sales_returns()
+		self.create_payout_journal_entry()
+
+	# def update_shopify_payout(self):
+	# 	with self.settings.get_shopify_session(temp=True):
+	# 		payout = Payouts.find(cint(self.payout_id)) or frappe._dict()
+	# 		create_or_update_shopify_payout(payout, payout_doc=self)
+	# 		self.load_from_db()
 
 	def create_missing_orders(self):
 		for transaction in self.transactions:
@@ -34,8 +55,9 @@ class ShopifyPayout(Document):
 
 			# create an order, invoice and delivery, if missing
 			if shopify_order_id and not get_shopify_document("Sales Order", shopify_order_id):
-				order = Order.find(shopify_order_id)
-				sync_shopify_order(order.to_dict())
+				with self.settings.get_shopify_session(temp=True):
+					order = Order.find(cint(shopify_order_id)) or frappe._dict()
+					sync_shopify_order(order.to_dict())
 
 				transaction.update({
 					"sales_order": get_shopify_document("Sales Order", shopify_order_id),
@@ -43,21 +65,32 @@ class ShopifyPayout(Document):
 					"delivery_note": get_shopify_document("Delivery Note", shopify_order_id)
 				})
 
-	def update_cancelled_orders(self):
+	def update_cancelled_shopify_orders(self):
+		doctypes = ["Delivery Note", "Sales Invoice", "Sales Order"]
 		for transaction in self.transactions:
-			doctypes = ["Delivery Note", "Sales Invoice", "Sales Order"]
+			if not transaction.source_order_id:
+				continue
+
+			with self.settings.get_shopify_session(temp=True):
+				shopify_order = Order.find(cint(transaction.source_order_id)) or frappe._dict()
+
+			if not (shopify_order and shopify_order.cancelled_at):
+				continue
+
 			for doctype in doctypes:
 				doctype_field = frappe.scrub(doctype)
 				docname = transaction.get(doctype_field)
 				if docname:
 					frappe.get_doc(doctype, docname).cancel()
+					transaction.set(doctype_field, None)
 
 	def create_sales_returns(self):
 		invoices = {transaction.sales_invoice: transaction.source_order_id for transaction in self.transactions
 			if transaction.sales_invoice and transaction.source_order_id}
 
 		for sales_invoice_id, shopify_order_id in invoices.items():
-			shopify_order = Order.find(shopify_order_id) or frappe._dict()
+			with self.settings.get_shopify_session(temp=True):
+				shopify_order = Order.find(cint(shopify_order_id)) or frappe._dict()
 
 			is_order_refunded = shopify_order.financial_status == "refunded"
 			is_invoice_returned = frappe.db.get_value("Sales Invoice", sales_invoice_id, "status") in ["Return",
@@ -68,7 +101,7 @@ class ShopifyPayout(Document):
 				return_invoice.save()
 				return_invoice.submit()
 
-	def create_journal_entry(self):
+	def create_payout_journal_entry(self):
 		payouts_by_order = defaultdict(list)
 		for transaction in self.transactions:
 			if transaction.sales_invoice:

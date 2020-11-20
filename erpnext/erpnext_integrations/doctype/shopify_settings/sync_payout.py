@@ -17,13 +17,13 @@ class Transactions(ShopifyResource):
 
 def get_payouts(shopify_settings):
 	kwargs = dict()
-	if shopify_settings.last_sync_datetime:
-		kwargs['date_min'] = shopify_settings.last_sync_datetime
+	# if shopify_settings.last_sync_datetime:
+	# 	kwargs['date_min'] = shopify_settings.last_sync_datetime
 
 	try:
 		payouts = PaginatedIterator(Payouts.find(**kwargs))
 	except Exception as e:
-		make_shopify_log(status="Error", exception=e, rollback=True)
+		make_shopify_log(status="Payout Error", exception=e, rollback=True)
 		return []
 	else:
 		return payouts
@@ -46,7 +46,8 @@ def sync_payouts_from_shopify():
 
 	with shopify_settings.get_shopify_session(temp=True):
 		payouts = get_payouts(shopify_settings)
-		frappe.enqueue(method=create_shopify_payouts, queue='long', **{"payouts": payouts})
+		create_shopify_payouts(payouts)
+		# frappe.enqueue(method=create_shopify_payouts, queue='long', **{"payouts": payouts})
 
 	shopify_settings.last_sync_datetime = now()
 	shopify_settings.save()
@@ -69,6 +70,21 @@ def create_shopify_payouts(payouts):
 
 
 def create_or_update_shopify_payout(payout, payout_doc=None):
+	"""
+	Create a Payout document from Shopify's Payout information.
+	If a payout exists, update that instead.
+
+	Args:
+
+		payout (Payout): The Payout payload from Shopify
+		payout_doc (ShopifyPayout, optional): The existing Shopify Payout ERPNext
+			document. Defaults to None.
+
+	Returns:
+
+		str: The document ID of the created / updated Shopify Payout
+	"""
+
 	if not payout_doc:
 		payout_doc = frappe.new_doc("Shopify Payout")
 
@@ -87,9 +103,10 @@ def create_or_update_shopify_payout(payout, payout_doc=None):
 		payout_transactions = Transactions.find(payout_id=payout.id)
 	except Exception as e:
 		payout_doc.save()
-		make_shopify_log(status="Error", response_data=payout.to_dict(), exception=e)
-		return
+		make_shopify_log(status="Payout Transactions Error", response_data=payout.to_dict(), exception=e)
+		return payout_doc.name
 
+	payout_doc.set("transactions", [])
 	for transaction in payout_transactions:
 		shopify_order_id = transaction.source_order_id
 		payout_doc.append("transactions", {
