@@ -19,7 +19,7 @@ WEIGHT_UOM_MAP = {
 
 
 @frappe.whitelist()
-def sync_items_from_shopify():
+def sync_products_from_shopify():
 	shopify_settings = frappe.get_single("Shopify Settings")
 	if not shopify_settings.enable_shopify:
 		return

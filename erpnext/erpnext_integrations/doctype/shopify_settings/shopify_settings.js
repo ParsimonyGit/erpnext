@@ -33,25 +33,12 @@ frappe.ui.form.on("Shopify Settings", {
 
 		frm.add_custom_button(__("Products"), function () {
 			frappe.call({
-				method: "erpnext.erpnext_integrations.doctype.shopify_settings.sync_product.sync_items_from_shopify",
+				method: "erpnext.erpnext_integrations.doctype.shopify_settings.sync_product.sync_products_from_shopify",
 				freeze: true,
 				callback: function (r) {
 					if (r.message) {
 						frappe.msgprint(__("Product sync has been queued. This may take a few minutes."));
 					}
-				}
-			})
-		}, __("Sync"))
-
-		frm.add_custom_button(__("Orders"), function () {
-			frappe.call({
-				method: "erpnext.erpnext_integrations.doctype.shopify_settings.sync_order.sync_orders_from_shopify",
-				freeze: true,
-				callback: function (r) {
-					// TODO: re-enable when the server-side enqueue is working
-					// if (r.message) {
-					// 	frappe.msgprint(__("Order sync has been queued. This may take a few minutes."));
-					// }
 				}
 			})
 		}, __("Sync"))
