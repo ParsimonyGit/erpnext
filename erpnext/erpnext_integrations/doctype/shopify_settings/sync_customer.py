@@ -1,19 +1,23 @@
-from __future__ import unicode_literals
 import frappe
 from frappe import _
+from frappe.utils import cstr
+
 
 def create_customer(shopify_customer, shopify_settings):
 	import frappe.utils.nestedset
 
-	cust_name = (shopify_customer.get("first_name") + " " + (shopify_customer.get("last_name") \
-		and  shopify_customer.get("last_name") or "")) if shopify_customer.get("first_name")\
-		else shopify_customer.get("email")
+	if shopify_customer.get("first_name"):
+		first_name = cstr(shopify_customer.get("first_name"))
+		last_name = cstr(shopify_customer.get("last_name"))
+		cust_name = f"{first_name} {last_name}"
+	else:
+		cust_name = shopify_customer.get("email")
 
 	try:
 		customer = frappe.get_doc({
 			"doctype": "Customer",
 			"name": shopify_customer.get("id"),
-			"customer_name" : cust_name,
+			"customer_name": cust_name,
 			"shopify_customer_id": shopify_customer.get("id"),
 			"sync_with_shopify": 1,
 			"customer_group": shopify_settings.customer_group,
@@ -27,9 +31,9 @@ def create_customer(shopify_customer, shopify_settings):
 			create_customer_address(customer, shopify_customer)
 
 		frappe.db.commit()
-
 	except Exception as e:
 		raise e
+
 
 def create_customer_address(customer, shopify_customer):
 	if not shopify_customer.get("addresses"):
@@ -37,7 +41,7 @@ def create_customer_address(customer, shopify_customer):
 
 	for i, address in enumerate(shopify_customer.get("addresses")):
 		address_title, address_type = get_address_title_and_type(customer.customer_name, i)
-		try :
+		try:
 			frappe.get_doc({
 				"doctype": "Address",
 				"shopify_address_id": address.get("id"),
@@ -56,14 +60,16 @@ def create_customer_address(customer, shopify_customer):
 					"link_name": customer.name
 				}]
 			}).insert(ignore_mandatory=True)
-
 		except Exception as e:
 			raise e
+
 
 def get_address_title_and_type(customer_name, index):
 	address_type = _("Billing")
 	address_title = customer_name
-	if frappe.db.get_value("Address", "{0}-{1}".format(customer_name.strip(), address_type)):
-		address_title = "{0}-{1}".format(customer_name.strip(), index)
+
+	address_name = f"{customer_name.strip()}-{address_type}"
+	if frappe.db.get_value("Address", address_name):
+		address_title = f"{customer_name.strip()}-{index}"
 
 	return address_title, address_type
