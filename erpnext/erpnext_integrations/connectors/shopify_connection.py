@@ -1,6 +1,7 @@
 import json
 
 import frappe
+from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_sales_return
 from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import dump_request_data, make_shopify_log
 from erpnext.erpnext_integrations.doctype.shopify_settings.sync_customer import create_customer
 from erpnext.erpnext_integrations.doctype.shopify_settings.sync_product import make_item
@@ -122,8 +123,12 @@ def validate_item(order, shopify_settings):
 def create_order(order, shopify_settings, company=None):
 	so = create_sales_order(order, shopify_settings, company)
 	if so:
-		if order.get("financial_status") == "paid":
-			create_sales_invoice(order, shopify_settings, so)
+		if order.get("financial_status") in ["paid", "refunded"]:
+			si = create_sales_invoice(order, shopify_settings, so)
+			if si and order.get("financial_status") == "refunded":
+				return_invoice = make_sales_return(si)
+				return_invoice.save()
+				return_invoice.submit()
 
 		if order.get("fulfillments"):
 			create_delivery_note(order, shopify_settings, so)
@@ -180,6 +185,7 @@ def create_sales_invoice(shopify_order, shopify_settings, so):
 		si.submit()
 		make_payment_entry_against_sales_invoice(si, shopify_settings)
 		frappe.db.commit()
+		return si.name
 
 
 def set_cost_center(items, cost_center):
@@ -276,7 +282,8 @@ def update_taxes_with_shipping_lines(taxes, shipping_lines, shopify_settings):
 	"""Shipping lines represents the shipping details,
 		each such shipping detail consists of a list of tax_lines"""
 	for shipping_charge in shipping_lines:
-		for tax in shipping_charge.get("tax_lines"):
+		shipping_tax_lines = [shipping_charge] or shipping_charge.get('tax_lines')
+		for tax in shipping_tax_lines:
 			taxes.append({
 				"charge_type": _("Actual"),
 				"account_head": get_tax_account_head(tax),

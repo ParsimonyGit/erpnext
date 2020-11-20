@@ -59,11 +59,11 @@ class ShopifyPayout(Document):
 					order = Order.find(cint(shopify_order_id)) or frappe._dict()
 					sync_shopify_order(order.to_dict())
 
-				transaction.update({
-					"sales_order": get_shopify_document("Sales Order", shopify_order_id),
-					"sales_invoice": get_shopify_document("Sales Invoice", shopify_order_id),
-					"delivery_note": get_shopify_document("Delivery Note", shopify_order_id)
-				})
+			transaction.update({
+				"sales_order": get_shopify_document("Sales Order", shopify_order_id),
+				"sales_invoice": get_shopify_document("Sales Invoice", shopify_order_id),
+				"delivery_note": get_shopify_document("Delivery Note", shopify_order_id)
+			})
 
 	def update_cancelled_shopify_orders(self):
 		doctypes = ["Delivery Note", "Sales Invoice", "Sales Order"]
@@ -102,12 +102,12 @@ class ShopifyPayout(Document):
 				return_invoice.submit()
 
 	def create_payout_journal_entry(self):
-		payouts_by_order = defaultdict(list)
+		payouts_by_invoice = defaultdict(list)
 		for transaction in self.transactions:
 			if transaction.sales_invoice:
-				payouts_by_order[transaction.sales_invoice].append(transaction)
+				payouts_by_invoice[transaction.sales_invoice].append(transaction)
 
-		for invoice_id, order_transactions in payouts_by_order.items():
+		for invoice_id, order_transactions in payouts_by_invoice.items():
 			for transaction in order_transactions:
 				transaction_type = transaction.transaction_type.lower()
 
