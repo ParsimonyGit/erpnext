@@ -109,13 +109,16 @@ def create_or_update_shopify_payout(payout, payout_doc=None):
 	payout_doc.set("transactions", [])
 	for transaction in payout_transactions:
 		shopify_order_id = transaction.source_order_id
+		total_amount = -flt(transaction.amount) if transaction.type == "payout" else flt(transaction.amount)
+		net_amount = -flt(transaction.net) if transaction.type == "payout" else flt(transaction.net)
+
 		payout_doc.append("transactions", {
 			"transaction_id": transaction.id,
 			"transaction_type": frappe.unscrub(transaction.type),
 			"processed_at": getdate(transaction.processed_at),
-			"total_amount": flt(transaction.amount),
+			"total_amount": total_amount,
 			"fee": flt(transaction.fee),
-			"net_amount": flt(transaction.net),
+			"net_amount": net_amount,
 			"currency": transaction.currency,
 			"sales_order": get_shopify_document("Sales Order", shopify_order_id),
 			"sales_invoice": get_shopify_document("Sales Invoice", shopify_order_id),

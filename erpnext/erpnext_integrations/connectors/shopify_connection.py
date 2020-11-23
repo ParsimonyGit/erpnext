@@ -8,7 +8,7 @@ from erpnext.erpnext_integrations.doctype.shopify_settings.sync_product import m
 from erpnext.erpnext_integrations.utils import validate_webhooks_request
 from erpnext.selling.doctype.sales_order.sales_order import make_delivery_note, make_sales_invoice
 from frappe import _
-from frappe.utils import cint, cstr, flt, nowdate
+from frappe.utils import cint, cstr, flt, getdate, nowdate
 
 
 @frappe.whitelist(allow_guest=True)
@@ -22,12 +22,6 @@ def store_request_data(order=None, event=None):
 
 
 def sync_sales_order(order, request_id=None):
-	frappe.set_user('Administrator')
-	frappe.flags.request_id = request_id
-	sync_shopify_order(order, request_id)
-
-
-def sync_shopify_order(order, request_id=None):
 	"""
 	Create the following from a Shopify order:
 
@@ -42,18 +36,71 @@ def sync_shopify_order(order, request_id=None):
 			for this request. Defaults to None.
 	"""
 
+	frappe.set_user('Administrator')
+	frappe.flags.request_id = request_id
+	so = create_shopify_order(order, request_id)
+	if so:
+		create_shopify_invoice(order, so, request_id)
+		create_shopify_delivery(order, so, request_id)
+
+
+def create_shopify_order(order, request_id=None):
 	shopify_settings = frappe.get_single("Shopify Settings")
 	frappe.flags.request_id = request_id
 
-	if not frappe.db.get_value("Sales Order", filters={"docstatus": ["<", 2], "shopify_order_id": cstr(order['id'])}):
-		try:
-			validate_customer(order, shopify_settings)
-			validate_item(order, shopify_settings)
-			create_order(order, shopify_settings)
-		except Exception as e:
-			make_shopify_log(status="Error", response_data=order, exception=e)
-		else:
-			make_shopify_log(status="Success", response_data=order)
+	existing_so = frappe.db.get_value("Sales Order",
+		filters={
+			"docstatus": ["<", 2],
+			"shopify_order_id": cstr(order['id'])
+		})
+
+	if existing_so:
+		return frappe.get_doc("Sales Order", existing_so)
+
+	try:
+		validate_customer(order, shopify_settings)
+		validate_item(order, shopify_settings)
+		so = create_sales_order(order, shopify_settings)
+	except Exception as e:
+		make_shopify_log(status="Error", response_data=order, exception=e)
+	else:
+		make_shopify_log(status="Success", response_data=order)
+		return so
+
+
+def create_shopify_invoice(order, so, request_id=None):
+	shopify_settings = frappe.get_single("Shopify Settings")
+	frappe.flags.request_id = request_id
+
+	if not order.get("financial_status") in ["paid", "refunded"]:
+		return
+
+	try:
+		si = create_sales_invoice(order, shopify_settings, so)
+		if si and order.get("financial_status") == "refunded":
+			return_invoice = make_sales_return(si)
+			return_invoice.save()
+			return_invoice.submit()
+	except Exception as e:
+		make_shopify_log(status="Error", response_data=order, exception=e)
+	else:
+		return si
+
+
+def create_shopify_delivery(order, so, request_id=None):
+	shopify_settings = frappe.get_single("Shopify Settings")
+	frappe.flags.request_id = request_id
+
+	if not order.get("fulfillments"):
+		return
+
+	try:
+		delivery_notes = create_delivery_note(order, shopify_settings, so)
+	except Exception as e:
+		make_shopify_log(status="Error", response_data=order, exception=e)
+		return
+	else:
+		return delivery_notes
 
 
 def prepare_sales_invoice(order, request_id=None):
@@ -120,20 +167,6 @@ def validate_item(order, shopify_settings):
 			make_item(shopify_settings.warehouse, item)
 
 
-def create_order(order, shopify_settings, company=None):
-	so = create_sales_order(order, shopify_settings, company)
-	if so:
-		if order.get("financial_status") in ["paid", "refunded"]:
-			si = create_sales_invoice(order, shopify_settings, so)
-			if si and order.get("financial_status") == "refunded":
-				return_invoice = make_sales_return(si)
-				return_invoice.save()
-				return_invoice.submit()
-
-		if order.get("fulfillments"):
-			create_delivery_note(order, shopify_settings, so)
-
-
 def create_sales_order(shopify_order, shopify_settings, company=None):
 	customer = frappe.db.get_value("Customer", {"shopify_customer_id": shopify_order.get("customer", {}).get("id")}, "name")
 	so = frappe.db.get_value("Sales Order", {"docstatus": ["<", 2], "shopify_order_id": shopify_order.get("id")}, "name")
@@ -178,6 +211,9 @@ def create_sales_invoice(shopify_order, shopify_settings, so):
 
 		si = make_sales_invoice(so.name, ignore_permissions=True)
 		si.shopify_order_id = shopify_order.get("id")
+		si.shopify_order_number = shopify_order.get("name")
+		si.set_posting_time = 1
+		si.posting_date = getdate(shopify_order.get('created_at'))
 		si.naming_series = shopify_settings.sales_invoice_series or "SI-Shopify-"
 		si.flags.ignore_mandatory = True
 		set_cost_center(si.items, shopify_settings.cost_center)
@@ -207,12 +243,16 @@ def create_delivery_note(shopify_order, shopify_settings, so):
 	if not cint(shopify_settings.sync_delivery_note):
 		return
 
+	delivery_notes = []
 	for fulfillment in shopify_order.get("fulfillments"):
 		if not frappe.db.get_value("Delivery Note", {"shopify_fulfillment_id": fulfillment.get("id")}, "name")\
 			and so.docstatus == 1:
 
 			dn = make_delivery_note(so.name)
 			dn.shopify_order_id = fulfillment.get("order_id")
+			dn.shopify_order_number = shopify_order.get("name")
+			dn.set_posting_time = 1
+			dn.posting_date = getdate(fulfillment.get("created_at"))
 			dn.shopify_fulfillment_id = fulfillment.get("id")
 			dn.naming_series = shopify_settings.delivery_note_series or "DN-Shopify-"
 			dn.items = get_fulfillment_items(dn.items, fulfillment.get("line_items"))
@@ -220,6 +260,9 @@ def create_delivery_note(shopify_order, shopify_settings, so):
 			dn.save()
 			dn.submit()
 			frappe.db.commit()
+			delivery_notes.append(dn.name)
+
+	return delivery_notes
 
 
 def get_fulfillment_items(dn_items, fulfillment_items):
