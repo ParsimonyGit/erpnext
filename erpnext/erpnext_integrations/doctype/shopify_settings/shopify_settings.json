@@ -6,27 +6,27 @@
  "field_order": [
   "status_html",
   "enable_shopify",
+  "shopify_url",
   "column_break_4",
   "app_type",
   "last_sync_datetime",
-  "sb_shopify",
-  "shopify_url",
+  "sb_auth",
   "api_key",
-  "cb_shopify",
   "password",
+  "cb_auth",
   "shared_secret",
   "access_token",
   "sb_webhook",
   "webhooks",
-  "sb_customer",
-  "default_customer",
-  "cb_customer",
-  "customer_group",
   "sb_company",
   "company",
   "cash_bank_account",
   "cb_company",
   "cost_center",
+  "sb_customer",
+  "default_customer",
+  "cb_customer",
+  "customer_group",
   "sb_transactions",
   "price_list",
   "update_price_in_erpnext_price_list",
@@ -97,7 +97,7 @@
   {
    "fieldname": "shared_secret",
    "fieldtype": "Data",
-   "label": "Shared secret"
+   "label": "Shared Secret"
   },
   {
    "fieldname": "access_token",
@@ -197,16 +197,8 @@
   {
    "fieldname": "taxes",
    "fieldtype": "Table",
-   "label": "Shopify Tax Account",
+   "label": "Map Shopify Taxes / Shipping Charges to ERPNext Account",
    "options": "Shopify Tax Account"
-  },
-  {
-   "fieldname": "sb_shopify",
-   "fieldtype": "Section Break"
-  },
-  {
-   "fieldname": "cb_shopify",
-   "fieldtype": "Column Break"
   },
   {
    "collapsible": 1,
@@ -215,15 +207,17 @@
    "label": "Webhooks Details"
   },
   {
+   "collapsible": 1,
    "fieldname": "sb_customer",
    "fieldtype": "Section Break",
-   "label": "Customer Settings"
+   "label": "Customer Defaults"
   },
   {
    "fieldname": "cb_customer",
    "fieldtype": "Column Break"
   },
   {
+   "collapsible": 1,
    "fieldname": "sb_company",
    "fieldtype": "Section Break",
    "label": "Company Defaults"
@@ -233,6 +227,7 @@
    "fieldtype": "Column Break"
   },
   {
+   "collapsible": 1,
    "fieldname": "sb_transactions",
    "fieldtype": "Section Break",
    "label": "Transaction Defaults"
@@ -242,6 +237,7 @@
    "fieldtype": "Column Break"
   },
   {
+   "collapsible": 1,
    "fieldname": "sb_naming_series",
    "fieldtype": "Section Break",
    "label": "Naming Series"
@@ -251,13 +247,25 @@
    "fieldtype": "Column Break"
   },
   {
+   "collapsible": 1,
+   "collapsible_depends_on": "eval:!doc.__islocal",
    "fieldname": "sb_tax_accounts",
    "fieldtype": "Section Break",
-   "label": "Map Shopify Taxes / Shipping Charges to ERPNext Account"
+   "label": "Account Defaults"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "sb_auth",
+   "fieldtype": "Section Break",
+   "label": "Authentication"
+  },
+  {
+   "fieldname": "cb_auth",
+   "fieldtype": "Column Break"
   }
  ],
  "issingle": 1,
- "modified": "2020-10-27 05:11:58.655362",
+ "modified": "2020-11-24 00:55:15.961555",
  "modified_by": "Administrator",
  "module": "ERPNext Integrations",
  "name": "Shopify Settings",

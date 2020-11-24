@@ -78,6 +78,7 @@ def create_shopify_invoice(order, so, request_id=None):
 	try:
 		si = create_sales_invoice(order, shopify_settings, so)
 		if si and order.get("financial_status") == "refunded":
+			# TODO: use correct posting date for returns
 			return_invoice = make_sales_return(si)
 			return_invoice.save()
 			return_invoice.submit()

@@ -28,7 +28,7 @@ class ShopifyPayout(Document):
 			- Create missing order documents for any Shopify Order
 		"""
 
-		# self.update_shopify_payout()
+		# TODO: self.update_shopify_payout()
 		self.create_missing_orders()
 
 	def on_submit(self):
@@ -55,23 +55,34 @@ class ShopifyPayout(Document):
 		for transaction in self.transactions:
 			shopify_order_id = transaction.source_order_id
 
-			# create an order, invoice and delivery, if missing
-			# if shopify_order_id and not get_shopify_document("Sales Order", shopify_order_id):
+			if not shopify_order_id:
+				continue
+
 			with self.settings.get_shopify_session(temp=True):
 				order = Order.find(cint(shopify_order_id))
 				if not order:
 					continue
 
-				# TODO: use correct posting date for returns
-				so = create_shopify_order(order.to_dict())
-				if so:
-					create_shopify_invoice(order.to_dict(), so)
-					create_shopify_delivery(order.to_dict(), so)
+			sales_order = get_shopify_document("Sales Order", shopify_order_id)
+			sales_invoice = get_shopify_document("Sales Invoice", shopify_order_id)
+			delivery_note = get_shopify_document("Delivery Note", shopify_order_id)
 
+			# create an order, invoice and delivery, if missing
+			if not sales_order:
+				sales_order = create_shopify_order(order.to_dict())
+
+			if sales_order:
+				if not sales_invoice:
+					sales_invoice = create_shopify_invoice(order.to_dict(), sales_order)
+				if not delivery_note:
+					delivery_notes = create_shopify_delivery(order.to_dict(), sales_order)
+					delivery_note = delivery_notes[0] if delivery_notes and len(delivery_notes) > 0 else None
+
+			# update the transaction with the linked documents
 			transaction.update({
-				"sales_order": get_shopify_document("Sales Order", shopify_order_id),
-				"sales_invoice": get_shopify_document("Sales Invoice", shopify_order_id),
-				"delivery_note": get_shopify_document("Delivery Note", shopify_order_id)
+				"sales_order": sales_order,
+				"sales_invoice": sales_invoice,
+				"delivery_note": delivery_note
 			})
 
 	def update_cancelled_shopify_orders(self):
@@ -91,22 +102,26 @@ class ShopifyPayout(Document):
 			for doctype in doctypes:
 				doctype_field = frappe.scrub(doctype)
 				docname = transaction.get(doctype_field)
-				if docname:
-					doc = frappe.get_doc(doctype, docname)
 
-					# do not cancel refunded orders
-					if doctype == "Sales Invoice" and doc.status in ["Return", "Credit Note Issued"]:
-						continue
+				if not docname:
+					continue
 
-					# allow cancelling invoices and maintaining links with payout
-					doc.ignore_linked_doctypes = ["Shopify Payout"]
+				doc = frappe.get_doc(doctype, docname)
 
-					try:
-						doc.cancel()
-					except Exception as e:
-						make_shopify_log(status="Error", exception=e)
+				# do not cancel refunded orders
+				if doctype == "Sales Invoice" and doc.status in ["Return", "Credit Note Issued"]:
+					continue
 
-					transaction.set(doctype_field, None)
+				# allow cancelling invoices and maintaining links with payout
+				doc.ignore_linked_doctypes = ["Shopify Payout"]
+
+				# catch any other errors and log it
+				try:
+					doc.cancel()
+				except Exception as e:
+					make_shopify_log(status="Error", exception=e)
+
+				transaction.set(doctype_field, None)
 
 	def create_sales_returns(self):
 		invoices = {transaction.sales_invoice: transaction.source_order_id for transaction in self.transactions
@@ -135,6 +150,9 @@ class ShopifyPayout(Document):
 				payouts_by_invoice[transaction.sales_invoice].append(transaction)
 
 		for invoice_id, order_transactions in payouts_by_invoice.items():
+			ref_dt = "Sales Invoice"
+			ref_dn = invoice_id
+
 			for transaction in order_transactions:
 				transaction_type = transaction.transaction_type.lower()
 
