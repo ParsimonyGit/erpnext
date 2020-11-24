@@ -4,21 +4,25 @@
 
 from collections import defaultdict
 
-from shopify import Order
+from shopify import Order, Transaction
 
 import frappe
 from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_sales_return
 from erpnext.erpnext_integrations.connectors.shopify_connection import (
-	create_shopify_delivery, create_shopify_invoice, create_shopify_order)
+	create_shopify_delivery, create_shopify_invoice, create_shopify_order,
+	get_tax_account_head)
+from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log
 from erpnext.erpnext_integrations.doctype.shopify_settings.sync_payout import (
 	Payouts, create_or_update_shopify_payout, get_shopify_document)
 from frappe.model.document import Document
 from frappe.utils import cint
-from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log
 
 
 class ShopifyPayout(Document):
 	settings = frappe.get_single("Shopify Settings")
+
+	def on_update(self):
+		self.create_payout_journal_entry()
 
 	def before_submit(self):
 		"""
@@ -96,7 +100,7 @@ class ShopifyPayout(Document):
 				if not shopify_order:
 					continue
 
-			if not (shopify_order and shopify_order.cancelled_at):
+			if not shopify_order.cancelled_at:
 				continue
 
 			for doctype in doctypes:
@@ -144,27 +148,137 @@ class ShopifyPayout(Document):
 				return_invoice.submit()
 
 	def create_payout_journal_entry(self):
+		journal_entry = frappe.new_doc("Journal Entry")
+		journal_entry.posting_date = frappe.utils.today()
+
+		entries = []
+
+		# make payout cash entry
+		for transaction in self.transactions:
+			if transaction.transaction_type.lower() == "payout":
+				if transaction.total_amount:
+					entries.append(get_amount_entry(transaction))
+
+				if transaction.fee:
+					entries.append(get_fee_entry(self, transaction))
+
+		# get list of transactions that need to be balanced
 		payouts_by_invoice = defaultdict(list)
 		for transaction in self.transactions:
 			if transaction.sales_invoice:
+				is_invoice_returned = frappe.get_all("Sales Invoice",
+					filters={
+						"docstatus": 1,
+						"is_return": 1,
+						"return_against": transaction.sales_invoice
+					})
+
+				if is_invoice_returned:
+					continue
+
 				payouts_by_invoice[transaction.sales_invoice].append(transaction)
 
+		# generate journal entries for each missing transaction
 		for invoice_id, order_transactions in payouts_by_invoice.items():
 			ref_dt = "Sales Invoice"
 			ref_dn = invoice_id
+			party_type = "Customer"
+			party_name = frappe.get_cached_value("Sales Invoice", invoice_id, "customer")
 
 			for transaction in order_transactions:
-				transaction_type = transaction.transaction_type.lower()
+				references = dict(
+					reference_type=ref_dt,
+					reference_name=ref_dn,
+					party_type=party_type,
+					party_name=party_name
+				)
 
-				# check for charges / payouts
-				if transaction_type == "charge":
-					# TODO
-					pass
-				# check for adjustments
-				elif transaction_type == "adjustment":
-					# TODO
-					pass
-				# check for refunds
-				elif transaction_type == "refund":
-					# TODO
-					pass
+				if transaction.total_amount:
+					entries.append(get_amount_entry(transaction, references))
+
+				if transaction.fee:
+					entries.append(get_fee_entry(self, transaction, references))
+
+		if entries:
+			journal_entry = frappe.new_doc("Journal Entry")
+			journal_entry.posting_date = frappe.utils.today()
+			journal_entry.set("accounts", entries)
+			journal_entry.save()
+
+
+def get_amount_entry(transaction, references=None):
+	if not references:
+		references = {}
+
+	account = get_tax_account_head({"title": transaction.transaction_type})
+	return get_accounting_entry(
+		account=account,
+		amount=transaction.total_amount,
+		**references
+	)
+
+
+def get_fee_entry(payout, transaction, references=None):
+	if not references:
+		references = {}
+
+	with payout.settings.get_shopify_session(temp=True):
+		order_transaction = Transaction.find(
+			transaction.source_order_transaction_id,
+			order_id=transaction.source_order_id
+		)
+
+	fee_details = order_transaction.receipt.balance_transaction.fee_details
+	transaction_type = fee_details[0].description
+	account = get_tax_account_head({"title": transaction_type})
+
+	return get_accounting_entry(
+		account=account,
+		amount=-transaction.fee,
+		**references
+	)
+
+
+def get_accounting_entry(
+	account,
+	amount,
+	reference_type=None,
+	reference_name=None,
+	party_type=None,
+	party_name=None,
+	remark=None
+):
+	accounting_entry = frappe._dict({
+		"account": account,
+		"reference_type": reference_type,
+		"reference_name": reference_name,
+		"party_type": party_type,
+		"party": party_name,
+		"user_remark": remark
+	})
+
+	accounting_entry[get_debit_or_credit(amount, account)] = abs(amount)
+	return accounting_entry
+
+
+def get_debit_or_credit(amount, account):
+	root_type, account_type = frappe.get_cached_value(
+		"Account", account, ["root_type", "account_type"]
+	)
+
+	debit_field = "debit_in_account_currency"
+	credit_field = "credit_in_account_currency"
+
+	if root_type == "Asset":
+		if account_type in ("Receivable", "Payable"):
+			return debit_field if amount < 0 else credit_field
+		return debit_field if amount > 0 else credit_field
+	elif root_type == "Expense":
+		return debit_field if amount < 0 else credit_field
+	elif root_type == "Income":
+		return debit_field if amount > 0 else credit_field
+	elif root_type in ("Equity", "Liability"):
+		if account_type in ("Receivable", "Payable"):
+			return debit_field if amount > 0 else credit_field
+		else:
+			return debit_field if amount < 0 else credit_field
