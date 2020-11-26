@@ -52,6 +52,7 @@
   "is_subcontracted",
   "supplier_warehouse",
   "items_section",
+  "filter_items_by_supplier",
   "scan_barcode",
   "items",
   "section_break0",
@@ -1143,6 +1144,13 @@
    "label": "Represents Company",
    "options": "Company",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "depends_on": "eval: doc.supplier",
+   "fieldname": "filter_items_by_supplier",
+   "fieldtype": "Check",
+   "label": "Filter Items by Supplier"
   }
  ],
  "icon": "fa fa-truck",

@@ -34,6 +34,7 @@
   "plc_conversion_rate",
   "ignore_pricing_rule",
   "items_section",
+  "filter_items_by_supplier",
   "items",
   "pricing_rule_details",
   "pricing_rules",
@@ -797,6 +798,13 @@
    "fieldtype": "Date",
    "in_list_view": 1,
    "label": "Valid Till"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval: doc.supplier",
+   "fieldname": "filter_items_by_supplier",
+   "fieldtype": "Check",
+   "label": "Filter Items by Supplier"
   }
  ],
  "icon": "fa fa-shopping-cart",

@@ -81,20 +81,8 @@ erpnext.buying.BuyingController = erpnext.TransactionController.extend({
 		}
 
 		this.frm.set_query("item_code", "items", function() {
-			if (me.frm.doc.is_subcontracted == "Yes") {
-				return{
-					query: "erpnext.controllers.queries.item_query",
-					filters:{ 'supplier': me.frm.doc.supplier, 'is_sub_contracted_item': 1 }
-				}
-			}
-			else {
-				return{
-					query: "erpnext.controllers.queries.item_query",
-					filters: { 'supplier': me.frm.doc.supplier, 'is_purchase_item': 1 }
-				}
-			}
+			return me.get_item_query(me.frm.doc);
 		});
-
 
 		this.frm.set_query("manufacturer", "items", function(doc, cdt, cdn) {
 			const row = locals[cdt][cdn];
@@ -134,6 +122,10 @@ erpnext.buying.BuyingController = erpnext.TransactionController.extend({
 			this.frm.set_df_property('supplied_items', 'cannot_add_rows', 1);
 			this.frm.set_df_property('supplied_items', 'cannot_delete_rows', 1);
 		}
+	},
+
+	filter_items_by_supplier: function() {
+		this.set_item_query();
 	},
 
 	supplier: function() {
@@ -210,21 +202,27 @@ erpnext.buying.BuyingController = erpnext.TransactionController.extend({
 	get_item_query: function (doc) {
 		if (doc.supplier && doc.filter_items_by_supplier) {
 			return {
-				query: "erpnext.controllers.queries.supplier_item_query",
+				query: "erpnext.controllers.queries.item_supplier_query",
 				filters: {
 					'supplier': doc.supplier,
 					'is_purchase_item': 1
 				}
 			}
-		} else if (me.frm.doc.is_subcontracted == "Yes") {
+		} else if (doc.is_subcontracted == "Yes") {
 			return {
 				query: "erpnext.controllers.queries.item_query",
-				filters: { 'is_sub_contracted_item': 1 }
+				filters: {
+					'supplier': doc.supplier,
+					'is_sub_contracted_item': 1
+				}
 			}
 		} else {
 			return {
 				query: "erpnext.controllers.queries.item_query",
-				filters: { 'is_purchase_item': 1 }
+				filters: {
+					'supplier': doc.supplier,
+					'is_purchase_item': 1
+				}
 			}
 		}
 	},

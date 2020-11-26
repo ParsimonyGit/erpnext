@@ -60,6 +60,7 @@
   "items_col_break",
   "set_warehouse",
   "items_section",
+  "filter_items_by_supplier",
   "items",
   "sb_last_purchase",
   "total_qty",
@@ -1373,6 +1374,13 @@
    "options": "Tax Withholding Category",
    "show_days": 1,
    "show_seconds": 1
+  },
+  {
+   "default": "0",
+   "depends_on": "eval: doc.supplier",
+   "fieldname": "filter_items_by_supplier",
+   "fieldtype": "Check",
+   "label": "Filter Items by Supplier"
   }
  ],
  "icon": "fa fa-file-text",

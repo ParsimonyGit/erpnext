@@ -62,6 +62,7 @@
   "is_subcontracted",
   "items_section",
   "update_stock",
+  "filter_items_by_supplier",
   "scan_barcode",
   "items",
   "pricing_rule_details",
@@ -1708,6 +1709,13 @@
    "read_only": 1,
    "show_days": 1,
    "show_seconds": 1
+  },
+  {
+   "default": "0",
+   "depends_on": "eval: doc.supplier",
+   "fieldname": "filter_items_by_supplier",
+   "fieldtype": "Check",
+   "label": "Filter Items by Supplier"
   }
  ],
  "icon": "fa fa-file-text",
