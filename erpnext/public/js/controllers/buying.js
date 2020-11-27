@@ -194,6 +194,41 @@ erpnext.buying.BuyingController = erpnext.TransactionController.extend({
 		this.calculate_accepted_qty(doc, cdt, cdn)
 	},
 
+	set_item_query: function() {
+		var me = this;
+		this.frm.fields_dict.items.grid.set_custom_query = function () {
+			me.frm.set_query("item_code", "items", function (doc) {
+				return me.get_item_query(doc);
+			});
+		}
+
+		this.frm.set_query("item_code", "items", function (doc) {
+			return me.get_item_query(doc);
+		});
+	},
+
+	get_item_query: function (doc) {
+		if (doc.supplier && doc.filter_items_by_supplier) {
+			return {
+				query: "erpnext.controllers.queries.supplier_item_query",
+				filters: {
+					'supplier': doc.supplier,
+					'is_purchase_item': 1
+				}
+			}
+		} else if (me.frm.doc.is_subcontracted == "Yes") {
+			return {
+				query: "erpnext.controllers.queries.item_query",
+				filters: { 'is_sub_contracted_item': 1 }
+			}
+		} else {
+			return {
+				query: "erpnext.controllers.queries.item_query",
+				filters: { 'is_purchase_item': 1 }
+			}
+		}
+	},
+
 	calculate_accepted_qty: function(doc, cdt, cdn){
 		var item = frappe.get_doc(cdt, cdn);
 		frappe.model.round_floats_in(item, ["received_qty", "rejected_qty"]);
