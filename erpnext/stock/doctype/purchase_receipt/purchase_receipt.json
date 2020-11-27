@@ -56,6 +56,7 @@
   "is_subcontracted",
   "supplier_warehouse",
   "items_section",
+  "filter_items_by_supplier",
   "scan_barcode",
   "items",
   "section_break0",
@@ -1152,13 +1153,20 @@
    "hidden": 1,
    "label": "Is Old Subcontracting Flow",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "depends_on": "eval: doc.supplier",
+   "fieldname": "filter_items_by_supplier",
+   "fieldtype": "Check",
+   "label": "Filter Items by Supplier"
   }
  ],
  "icon": "fa fa-truck",
  "idx": 261,
  "is_submittable": 1,
  "links": [],
- "modified": "2022-06-15 15:43:40.664382",
+ "modified": "2022-06-16 15:43:40.664382",
  "modified_by": "Administrator",
  "module": "Stock",
  "name": "Purchase Receipt",
