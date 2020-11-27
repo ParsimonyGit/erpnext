@@ -43,7 +43,12 @@ def employee_query(doctype, txt, searchfield, start, page_len, filters):
 				"mcond": get_match_cond(doctype),
 			}
 		),
-		{"txt": "%%%s%%" % txt, "_txt": txt.replace("%", ""), "start": start, "page_len": page_len},
+		{
+			"txt": "%%%s%%" % txt,
+			"_txt": txt.replace("%", ""),
+			"start": start,
+			"page_len": page_len,
+		},
 	)
 
 
@@ -80,7 +85,12 @@ def lead_query(doctype, txt, searchfield, start, page_len, filters):
 				"mcond": get_match_cond(doctype),
 			}
 		),
-		{"txt": "%%%s%%" % txt, "_txt": txt.replace("%", ""), "start": start, "page_len": page_len},
+		{
+			"txt": "%%%s%%" % txt,
+			"_txt": txt.replace("%", ""),
+			"start": start,
+			"page_len": page_len,
+		},
 	)
 
 	# searches for customer
@@ -119,7 +129,12 @@ def customer_query(doctype, txt, searchfield, start, page_len, filters, as_dict=
 				"fcond": get_filters_cond(doctype, filters, conditions).replace("%", "%%"),
 			}
 		),
-		{"txt": "%%%s%%" % txt, "_txt": txt.replace("%", ""), "start": start, "page_len": page_len},
+		{
+			"txt": "%%%s%%" % txt,
+			"_txt": txt.replace("%", ""),
+			"start": start,
+			"page_len": page_len,
+		},
 		as_dict=as_dict,
 	)
 
@@ -152,7 +167,12 @@ def supplier_query(doctype, txt, searchfield, start, page_len, filters, as_dict=
 		limit %(page_len)s offset %(start)s""".format(
 			**{"field": ", ".join(fields), "key": searchfield, "mcond": get_match_cond(doctype)}
 		),
-		{"txt": "%%%s%%" % txt, "_txt": txt.replace("%", ""), "start": start, "page_len": page_len},
+		{
+			"txt": "%%%s%%" % txt,
+			"_txt": txt.replace("%", ""),
+			"start": start,
+			"page_len": page_len,
+		},
 		as_dict=as_dict,
 	)
 
@@ -242,7 +262,9 @@ def item_query(doctype, txt, searchfield, start, page_len, filters, as_dict=Fals
 		if filters.get("customer") or filters.get("supplier"):
 			party = filters.get("customer") or filters.get("supplier")
 			item_rules_list = frappe.get_all(
-				"Party Specific Item", filters={"party": party}, fields=["restrict_based_on", "based_on_value"]
+				"Party Specific Item",
+				filters={"party": party},
+				fields=["restrict_based_on", "based_on_value"],
 			)
 
 			filters_dict = {}
@@ -349,7 +371,9 @@ def get_project_name(doctype, txt, searchfield, start, page_len, filters):
 
 	fields = get_fields(doctype, ["name", "project_name"])
 	searchfields = frappe.get_meta(doctype).get_search_fields()
-	searchfields = " or ".join(["`tabProject`." + field + " like %(txt)s" for field in searchfields])
+	searchfields = " or ".join(
+		["`tabProject`." + field + " like %(txt)s" for field in searchfields]
+	)
 
 	return frappe.db.sql(
 		"""select {fields} from `tabProject`
@@ -836,7 +860,6 @@ def get_doctypes_for_closing(doctype, txt, searchfield, start, page_len, filters
 @frappe.whitelist()
 @frappe.validate_and_sanitize_search_inputs
 def get_tax_template(doctype, txt, searchfield, start, page_len, filters):
-
 	item_doc = frappe.get_cached_doc("Item", filters.get("item_code"))
 	item_group = filters.get("item_group")
 	company = filters.get("company")
@@ -915,7 +938,41 @@ def get_filtered_child_rows(doctype, txt, searchfield, start, page_len, filters)
 	if txt:
 		txt += "%"
 		query = query.where(
-			((table.idx.like(txt.replace("#", ""))) | (table.item_code.like(txt))) | (table.name.like(txt))
+			((table.idx.like(txt.replace("#", ""))) | (table.item_code.like(txt)))
+			| (table.name.like(txt))
 		)
 
 	return query.run(as_dict=False)
+
+
+@frappe.whitelist()
+@frappe.validate_and_sanitize_search_inputs
+def item_supplier_query(doctype, txt, searchfield, start, page_len, filters):
+	item_suppliers = frappe.get_all(
+		"Item Supplier",
+		filters={"supplier": filters.get("supplier")},
+		fields=["parent"],
+		distinct=True,
+	)
+
+	item_defaults = frappe.get_all(
+		"Item Default",
+		filters={"default_supplier": filters.get("supplier")},
+		fields=["parent"],
+		distinct=True,
+	)
+
+	supplier_item_codes = item_suppliers + item_defaults
+	supplier_item_codes = [supplier.parent for supplier in supplier_item_codes]
+
+	supplier_items = frappe.get_all(
+		"Item",
+		filters={
+			"item_code": ["in", supplier_item_codes],
+			"is_purchase_item": filters.get("is_purchase_item"),
+		},
+		fields=["name", "item_name", "item_group", "description"],
+		distinct=True,
+		as_list=True,
+	)
+	return supplier_items

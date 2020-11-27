@@ -44,6 +44,7 @@
   "items_col_break",
   "set_warehouse",
   "items_section",
+  "filter_items_by_supplier",
   "items",
   "sb_last_purchase",
   "total_qty",
@@ -1269,13 +1270,20 @@
    "fieldtype": "Tab Break",
    "label": "Connections",
    "show_dashboard": 1
+  },
+  {
+   "default": "0",
+   "depends_on": "eval: doc.supplier",
+   "fieldname": "filter_items_by_supplier",
+   "fieldtype": "Check",
+   "label": "Filter Items by Supplier"
   }
  ],
  "icon": "fa fa-file-text",
  "idx": 105,
  "is_submittable": 1,
  "links": [],
- "modified": "2023-10-01 20:58:07.851037",
+ "modified": "2023-10-02 20:58:07.851037",
  "modified_by": "Administrator",
  "module": "Buying",
  "name": "Purchase Order",
