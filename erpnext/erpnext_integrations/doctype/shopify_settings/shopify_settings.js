@@ -29,6 +29,16 @@ frappe.ui.form.on("Shopify Settings", {
 
 			frm.toggle_reqd("sales_invoice_series", frm.doc.sync_sales_invoice);
 			frm.toggle_reqd("delivery_note_series", frm.doc.sync_delivery_note);
+
+			frm.set_intro(`
+				Syncing with Shopify requires the following API permissions in your
+					<a target="_blank" href="//${frm.doc.shopify_url}/admin/apps/private">private apps</a>:
+					</br></br>
+
+				<strong>Products:</strong> Read access (read_products)</br>
+				<strong>Orders:</strong> Read access (read_orders)</br>
+				<strong>Payouts:</strong> Read access (read_shopify_payments_payouts)
+			`);
 		}
 
 		frm.add_custom_button(__("Products"), function () {
