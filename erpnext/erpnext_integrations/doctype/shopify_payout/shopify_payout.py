@@ -4,7 +4,7 @@
 
 from collections import defaultdict
 
-from shopify import Order, Transaction
+from shopify import Payouts, Order, Transaction
 
 import frappe
 from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_sales_return
@@ -13,7 +13,7 @@ from erpnext.erpnext_integrations.connectors.shopify_connection import (
 	get_tax_account_head)
 from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log
 from erpnext.erpnext_integrations.doctype.shopify_settings.sync_payout import (
-	Payouts, create_or_update_shopify_payout, get_shopify_document)
+	create_or_update_shopify_payout, get_shopify_document)
 from frappe.model.document import Document
 from frappe.utils import cint
 

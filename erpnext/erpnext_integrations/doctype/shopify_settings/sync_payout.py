@@ -1,18 +1,8 @@
-from shopify import PaginatedIterator, ShopifyResource
+from shopify import PaginatedIterator, Payouts, Transactions
 
 import frappe
 from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log
 from frappe.utils import flt, getdate, now
-
-
-class Payouts(ShopifyResource):
-	# temporary class until https://github.com/Shopify/shopify_python_api/pull/431 is merged
-	_prefix_source = "/shopify_payments/"
-
-
-class Transactions(ShopifyResource):
-	# temporary class until https://github.com/Shopify/shopify_python_api/pull/431 is merged
-	_prefix_source = "/shopify_payments/balance/"
 
 
 def get_payouts(shopify_settings):
