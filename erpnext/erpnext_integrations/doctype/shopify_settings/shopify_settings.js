@@ -30,9 +30,16 @@ frappe.ui.form.on("Shopify Settings", {
 			frm.toggle_reqd("sales_invoice_series", frm.doc.sync_sales_invoice);
 			frm.toggle_reqd("delivery_note_series", frm.doc.sync_delivery_note);
 
+			let base_shopify_url;
+			if (frappe.utils.is_url(frm.doc.shopify_url)) {
+				base_shopify_url = frm.doc.shopify_url
+			} else {
+				base_shopify_url = `//${frm.doc.shopify_url}`
+			}
+
 			frm.set_intro(`
 				Syncing with Shopify requires the following API permissions in your
-					<a target="_blank" href="//${frm.doc.shopify_url}/admin/apps/private">private apps</a>:
+					<a target="_blank" href="${base_shopify_url}/admin/apps/private">private apps</a>:
 					</br></br>
 
 				<strong>Products:</strong> Read access (read_products)</br>
