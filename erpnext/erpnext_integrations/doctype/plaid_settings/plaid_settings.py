@@ -232,15 +232,14 @@ def automatic_synchronization():
 		enqueue_synchronization()
 
 
-@frappe.whitelist()
-def enqueue_synchronization():
-	plaid_accounts = frappe.get_all("Bank Account",
-		filters={"integration_id": ["!=", ""]},
-		fields=["name", "bank"])
+		for plaid_account in plaid_accounts:
+			frappe.enqueue(
+				"erpnext.erpnext_integrations.doctype.plaid_settings.plaid_settings.sync_transactions",
+				bank=plaid_account.bank,
+				bank_account=plaid_account.name
+			)
 
-	for plaid_account in plaid_accounts:
-		frappe.enqueue(
-			"erpnext.erpnext_integrations.doctype.plaid_settings.plaid_settings.sync_transactions",
-			bank=plaid_account.bank,
-			bank_account=plaid_account.name
-		)
+@frappe.whitelist()
+def get_link_token_for_update(access_token):
+	plaid = PlaidConnector(access_token)
+	return plaid.get_link_token(update_mode=True)
