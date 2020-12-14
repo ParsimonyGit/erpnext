@@ -43,6 +43,7 @@
    "unique": 1
   },
   {
+   "bold": 1,
    "fieldname": "payout_date",
    "fieldtype": "Date",
    "label": "Payout Date",
@@ -187,7 +188,7 @@
   }
  ],
  "is_submittable": 1,
- "modified": "2020-11-19 01:57:47.830227",
+ "modified": "2020-12-15 03:35:04.142306",
  "modified_by": "Administrator",
  "module": "ERPNext Integrations",
  "name": "Shopify Payout",

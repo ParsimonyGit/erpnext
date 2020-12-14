@@ -125,7 +125,7 @@ class ShopifyPayout(Document):
 				except Exception as e:
 					make_shopify_log(status="Error", exception=e)
 
-				transaction.set(doctype_field, None)
+				transaction.db_set(doctype_field, None)
 
 	def create_sales_returns(self):
 		invoices = {transaction.sales_invoice: transaction.source_order_id for transaction in self.transactions
@@ -162,33 +162,23 @@ class ShopifyPayout(Document):
 				if transaction.fee:
 					entries.append(get_fee_entry(self, transaction))
 
-		# get list of transactions that need to be balanced
+		# get the list of transactions that need to be balanced
 		payouts_by_invoice = defaultdict(list)
 		for transaction in self.transactions:
 			if transaction.sales_invoice:
-				is_invoice_returned = frappe.get_all("Sales Invoice",
-					filters={
-						"docstatus": 1,
-						"is_return": 1,
-						"return_against": transaction.sales_invoice
-					})
-
-				if is_invoice_returned:
-					continue
-
 				payouts_by_invoice[transaction.sales_invoice].append(transaction)
 
 		# generate journal entries for each missing transaction
 		for invoice_id, order_transactions in payouts_by_invoice.items():
-			ref_dt = "Sales Invoice"
-			ref_dn = invoice_id
+			reference_type = "Sales Invoice"
+			reference_name = invoice_id
 			party_type = "Customer"
 			party_name = frappe.get_cached_value("Sales Invoice", invoice_id, "customer")
 
 			for transaction in order_transactions:
 				references = dict(
-					reference_type=ref_dt,
-					reference_name=ref_dn,
+					reference_type=reference_type,
+					reference_name=reference_name,
 					party_type=party_type,
 					party_name=party_name
 				)
@@ -204,13 +194,25 @@ class ShopifyPayout(Document):
 			journal_entry.posting_date = frappe.utils.today()
 			journal_entry.set("accounts", entries)
 			journal_entry.save()
+			# journal_entry.submit()
 
 
 def get_amount_entry(transaction, references=None):
 	if not references:
 		references = {}
 
-	account = get_tax_account_head({"title": transaction.transaction_type})
+	account = None
+	if transaction.transaction_type:
+		account = get_tax_account_head({"title": transaction.transaction_type})
+
+	if not account:
+		if references.get("reference_name"):
+			account = frappe.db.get_value(references.get(
+				"reference_type"), references.get("reference_name"), "debit_to")
+		else:
+			# TODO: change to a different default
+			account = get_tax_account_head({"title": "Payout"})
+
 	return get_accounting_entry(
 		account=account,
 		amount=transaction.total_amount,
@@ -228,9 +230,19 @@ def get_fee_entry(payout, transaction, references=None):
 			order_id=transaction.source_order_id
 		)
 
-	fee_details = order_transaction.receipt.balance_transaction.fee_details
-	transaction_type = fee_details[0].description
-	account = get_tax_account_head({"title": transaction_type})
+	account = None
+	if hasattr(order_transaction.receipt, "balance_transaction"):
+		fee_details = order_transaction.receipt.balance_transaction.fee_details
+		transaction_type = fee_details[0].description
+		account = get_tax_account_head({"title": transaction_type})
+
+	if not account:
+		if references.get("reference_name"):
+			account = frappe.db.get_value(references.get(
+				"reference_type"), references.get("reference_name"), "debit_to")
+		else:
+			# TODO: change to a different default
+			account = get_tax_account_head({"title": "Payout"})
 
 	return get_accounting_entry(
 		account=account,

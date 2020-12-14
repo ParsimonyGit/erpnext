@@ -72,7 +72,7 @@ def create_shopify_invoice(order, so, request_id=None):
 	shopify_settings = frappe.get_single("Shopify Settings")
 	frappe.flags.request_id = request_id
 
-	if not order.get("financial_status") in ["paid", "refunded"]:
+	if not order.get("financial_status") in ["paid", "partially_refunded", "refunded"]:
 		return
 
 	try:
@@ -187,7 +187,7 @@ def create_sales_order(shopify_order, shopify_settings, company=None):
 			"items": items,
 			"taxes": get_order_taxes(shopify_order, shopify_settings),
 			"apply_discount_on": "Grand Total",
-			"discount_amount": get_discounted_amount(shopify_order),
+			"discount_amount": flt(shopify_order.get("total_discounts")),
 		})
 
 		if company:
@@ -220,7 +220,10 @@ def create_sales_invoice(shopify_order, shopify_settings, so):
 		set_cost_center(si.items, shopify_settings.cost_center)
 		si.insert(ignore_mandatory=True)
 		si.submit()
-		make_payment_entry_against_sales_invoice(si, shopify_settings)
+
+		# if si.grand_total > 0:
+		# 	make_payment_entry_against_sales_invoice(si, shopify_settings)
+
 		frappe.db.commit()
 		return si.name
 
@@ -230,14 +233,14 @@ def set_cost_center(items, cost_center):
 		item.cost_center = cost_center
 
 
-def make_payment_entry_against_sales_invoice(doc, shopify_settings):
-	from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
-	payment_entry = get_payment_entry(doc.doctype, doc.name, bank_account=shopify_settings.cash_bank_account)
-	payment_entry.flags.ignore_mandatory = True
-	payment_entry.reference_no = doc.name
-	payment_entry.reference_date = nowdate()
-	payment_entry.insert(ignore_permissions=True)
-	payment_entry.submit()
+# def make_payment_entry_against_sales_invoice(doc, shopify_settings):
+# 	from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
+# 	payment_entry = get_payment_entry(doc.doctype, doc.name, bank_account=shopify_settings.cash_bank_account)
+# 	payment_entry.flags.ignore_mandatory = True
+# 	payment_entry.reference_no = doc.name
+# 	payment_entry.reference_date = nowdate()
+# 	payment_entry.insert(ignore_permissions=True)
+# 	payment_entry.submit()
 
 
 def create_delivery_note(shopify_order, shopify_settings, so):
@@ -272,10 +275,6 @@ def get_fulfillment_items(dn_items, fulfillment_items):
 	return [dn_item.update({"qty": item.get("quantity"), "allow_zero_valuation_rate": 1})
 		for item in fulfillment_items for dn_item in dn_items
 		if get_item_code(item) == dn_item.item_code]
-
-
-def get_discounted_amount(order):
-	return sum(flt(discount.get("amount")) for discount in order.get("discount_codes"))
 
 
 def get_order_items(order_items, shopify_settings):
@@ -354,6 +353,15 @@ def get_tax_account_head(tax):
 		{"parent": "Shopify Settings", "shopify_tax": tax_title}, "tax_account")
 
 	if not tax_account:
-		frappe.throw(_("Tax Account not specified for Shopify Tax '{0}'".format(tax.get("title"))))
+		# frappe.throw(_("Tax Account not specified for Shopify Tax '{0}'".format(tax.get("title"))))
+
+		tax_account = "618300 - Postage and Shipping - PS"
+		settings = frappe.get_single("Shopify Settings")
+		settings.append("taxes", {
+			"shopify_tax": tax_title,
+			"tax_account": tax_account
+		})
+		settings.flags.ignore_validate = True
+		settings.save()
 
 	return tax_account

@@ -120,4 +120,5 @@ def create_or_update_shopify_payout(payout, payout_doc=None):
 		})
 
 	payout_doc.save()
+	frappe.db.commit()  # TODO: remove
 	return payout_doc.name
