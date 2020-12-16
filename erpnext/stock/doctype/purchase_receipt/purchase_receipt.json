@@ -1,5 +1,4 @@
 {
- "actions": [],
  "allow_import": 1,
  "autoname": "naming_series:",
  "creation": "2013-05-21 16:16:39",
@@ -47,6 +46,7 @@
   "is_subcontracted",
   "supplier_warehouse",
   "items_section",
+  "filter_items_by_supplier",
   "scan_barcode",
   "items",
   "pricing_rule_details",
@@ -102,6 +102,7 @@
   "bill_no",
   "bill_date",
   "more_info",
+  "project",
   "status",
   "amended_from",
   "range",
@@ -1059,13 +1060,26 @@
    "fieldname": "scan_barcode",
    "fieldtype": "Data",
    "label": "Scan Barcode"
+  },
+  {
+   "description": "Track this Purchase Receipt against any Project",
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval: doc.supplier",
+   "fieldname": "filter_items_by_supplier",
+   "fieldtype": "Check",
+   "label": "Filter Items by Supplier"
   }
  ],
  "icon": "fa fa-truck",
  "idx": 261,
  "is_submittable": 1,
- "links": [],
- "modified": "2020-04-17 13:06:26.970288",
+ "modified": "2020-11-26 01:07:24.815762",
  "modified_by": "Administrator",
  "module": "Stock",
  "name": "Purchase Receipt",

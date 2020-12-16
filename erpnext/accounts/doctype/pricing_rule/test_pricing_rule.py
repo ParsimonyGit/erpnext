@@ -386,6 +386,87 @@ class TestPricingRule(unittest.TestCase):
 		self.assertEqual(so.items[1].is_free_item, 1)
 		self.assertEqual(so.items[1].item_code, "_Test Item 2")
 
+	def test_cumulative_pricing_rule(self):
+		frappe.delete_doc_if_exists('Pricing Rule', '_Test Cumulative Pricing Rule')
+		test_record = {
+			"doctype": "Pricing Rule",
+			"title": "_Test Cumulative Pricing Rule",
+			"apply_on": "Item Code",
+			"currency": "USD",
+			"items": [{
+				"item_code": "_Test Item",
+			}],
+			"is_cumulative": 1,
+			"selling": 1,
+			"applicable_for": "Customer",
+			"customer": "_Test Customer",
+			"rate_or_discount": "Discount Percentage",
+			"rate": 0,
+			"min_amt": 0,
+			"max_amt": 10000,
+			"discount_percentage": 17.5,
+			"price_or_product_discount": "Price",
+			"company": "_Test Company",
+			"valid_from": frappe.utils.nowdate(),
+			"valid_upto": frappe.utils.nowdate()
+		}
+		frappe.get_doc(test_record.copy()).insert()
+
+		args = frappe._dict({
+			"item_code": "_Test Item",
+			"company": "_Test Company",
+			"price_list": "_Test Price List",
+			"currency": "_Test Currency",
+			"doctype": "Sales Invoice",
+			"conversion_rate": 1,
+			"price_list_currency": "_Test Currency",
+			"plc_conversion_rate": 1,
+			"order_type": "Sales",
+			"customer": "_Test Customer",
+			"name": None,
+			"transaction_date": frappe.utils.nowdate()
+		})
+		details = get_item_details(args)
+
+		self.assertTrue(details)
+
+	def test_item_price_with_pricing_rule(self):
+		item = make_item("Water Flask")
+		make_item_price("Water Flask", "_Test Price List", 100)
+
+		pricing_rule_record = {
+			"doctype": "Pricing Rule",
+			"title": "_Test Water Flask Rule",
+			"apply_on": "Item Code",
+			"items": [{
+				"item_code": "Water Flask",
+			}],
+			"selling": 1,
+			"currency": "INR",
+			"rate_or_discount": "Rate",
+			"rate": 0,
+			"margin_type": "Percentage",
+			"margin_rate_or_amount": 2,
+			"company": "_Test Company"
+		}
+		rule = frappe.get_doc(pricing_rule_record)
+		rule.insert()
+
+		si = create_sales_invoice(do_not_save=True, item_code="Water Flask")
+		si.selling_price_list = "_Test Price List"
+		si.save()
+
+		# If rate in Rule is 0, give preference to Item Price if it exists
+		self.assertEqual(si.items[0].price_list_rate, 100)
+		self.assertEqual(si.items[0].margin_rate_or_amount, 2)
+		self.assertEqual(si.items[0].rate_with_margin, 102)
+		self.assertEqual(si.items[0].rate, 102)
+
+		si.delete()
+		rule.delete()
+		frappe.get_doc("Item Price", {"item_code": "Water Flask"}).delete()
+		item.delete()
+
 def make_pricing_rule(**args):
 	args = frappe._dict(args)
 

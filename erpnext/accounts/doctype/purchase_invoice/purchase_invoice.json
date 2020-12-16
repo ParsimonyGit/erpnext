@@ -1,5 +1,4 @@
 {
- "actions": [],
  "allow_import": 1,
  "autoname": "naming_series:",
  "creation": "2013-05-21 16:16:39",
@@ -26,6 +25,7 @@
   "accounting_dimensions_section",
   "cost_center",
   "dimension_col_break",
+  "project",
   "sb_14",
   "on_hold",
   "release_date",
@@ -63,6 +63,7 @@
   "supplier_warehouse",
   "items_section",
   "update_stock",
+  "filter_items_by_supplier",
   "scan_barcode",
   "items",
   "pricing_rule_details",
@@ -356,6 +357,7 @@
    "fieldname": "bill_date",
    "fieldtype": "Date",
    "label": "Supplier Invoice Date",
+   "no_copy": 1,
    "oldfieldname": "bill_date",
    "oldfieldtype": "Date",
    "print_hide": 1
@@ -963,8 +965,10 @@
   {
    "fieldname": "clearance_date",
    "fieldtype": "Date",
-   "hidden": 1,
-   "label": "Clearance Date"
+   "label": "Clearance Date",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1
   },
   {
    "fieldname": "col_br_payments",
@@ -1233,6 +1237,7 @@
    "print_hide": 1
   },
   {
+   "collapsible": 1,
    "fieldname": "subscription_section",
    "fieldtype": "Section Break",
    "label": "Subscription Section",
@@ -1287,19 +1292,31 @@
    "fieldtype": "Column Break"
   },
   {
+   "fieldname": "project",
+   "fieldtype": "Link",
+   "label": "Project",
+   "options": "Project"
+  },
+  {
    "fieldname": "tax_withholding_category",
    "fieldtype": "Link",
    "hidden": 1,
    "label": "Tax Withholding Category",
    "options": "Tax Withholding Category",
    "print_hide": 1
+  },
+  {
+   "default": "0",
+   "depends_on": "eval: doc.supplier",
+   "fieldname": "filter_items_by_supplier",
+   "fieldtype": "Check",
+   "label": "Filter Items by Supplier"
   }
  ],
  "icon": "fa fa-file-text",
  "idx": 204,
  "is_submittable": 1,
- "links": [],
- "modified": "2020-04-18 13:05:25.199832",
+ "modified": "2020-11-26 01:06:57.308440",
  "modified_by": "Administrator",
  "module": "Accounts",
  "name": "Purchase Invoice",
