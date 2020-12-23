@@ -1,4 +1,4 @@
-from shopify import PaginatedIterator, Payouts, Transactions
+from shopify import Order, PaginatedIterator, Payouts, Transactions
 
 import frappe
 from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log
@@ -49,6 +49,13 @@ def sync_payouts_from_shopify():
 
 
 def create_shopify_payouts(payouts):
+	settings = frappe.get_single("Shopify Settings")
+	session = settings.get_shopify_session()
+
+	Payouts.activate_session(session)
+	Transactions.activate_session(session)
+	Order.activate_session(session)
+
 	for page in payouts:
 		for payout in page:
 			payout_docstatus = frappe.db.get_value("Shopify Payout", {"payout_id": payout.id}, "docstatus")
@@ -61,6 +68,10 @@ def create_shopify_payouts(payouts):
 				payout_name = frappe.db.get_value("Shopify Payout", {"payout_id": payout.id}, "name")
 				payout_doc = frappe.get_doc("Shopify Payout", payout_name)
 				create_or_update_shopify_payout(payout, payout_doc)
+
+	Payouts.clear_session()
+	Transactions.clear_session()
+	Order.clear_session()
 
 
 def create_or_update_shopify_payout(payout, payout_doc=None):
@@ -103,6 +114,8 @@ def create_or_update_shopify_payout(payout, payout_doc=None):
 	payout_doc.set("transactions", [])
 	for transaction in payout_transactions:
 		shopify_order_id = transaction.source_order_id
+		order = Order.find(shopify_order_id)
+
 		total_amount = -flt(transaction.amount) if transaction.type == "payout" else flt(transaction.amount)
 		net_amount = -flt(transaction.net) if transaction.type == "payout" else flt(transaction.net)
 
@@ -119,6 +132,7 @@ def create_or_update_shopify_payout(payout, payout_doc=None):
 			"delivery_note": get_shopify_document("Delivery Note", shopify_order_id),
 			"source_id": transaction.source_id,
 			"source_type": frappe.unscrub(transaction.source_type),
+			"source_order_financial_status": frappe.unscrub(order.financial_status),
 			"source_order_id": shopify_order_id,
 			"source_order_transaction_id": transaction.source_order_transaction_id,
 		})

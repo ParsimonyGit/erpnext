@@ -20,6 +20,7 @@
   "cb_references",
   "source_type",
   "source_id",
+  "source_order_financial_status",
   "source_order_id",
   "source_order_transaction_id"
  ],
@@ -143,10 +144,16 @@
    "label": "Delivery Note",
    "options": "Delivery Note",
    "read_only": 1
+  },
+  {
+   "fieldname": "source_order_financial_status",
+   "fieldtype": "Data",
+   "label": "Shopify Order Financial Status",
+   "read_only": 1
   }
  ],
  "istable": 1,
- "modified": "2020-11-19 02:13:56.559891",
+ "modified": "2020-12-23 01:52:48.786678",
  "modified_by": "Administrator",
  "module": "ERPNext Integrations",
  "name": "Shopify Payout Transaction",

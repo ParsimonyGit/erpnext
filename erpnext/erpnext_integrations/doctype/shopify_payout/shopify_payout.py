@@ -146,11 +146,11 @@ class ShopifyPayout(Document):
 				continue
 
 			# TODO: handle partial refunds
-			is_order_refunded = shopify_order.financial_status == "refunded"
+			is_order_fully_refunded = shopify_order.financial_status == "refunded"
 			is_invoice_returned = frappe.db.get_value("Sales Invoice", sales_invoice_id, "status") in ["Return",
 				"Credit Note Issued"]
 
-			if is_order_refunded and not is_invoice_returned:
+			if is_order_fully_refunded and not is_invoice_returned:
 				# TODO: use correct posting date for returns
 				return_invoice = make_sales_return(sales_invoice_id)
 				return_invoice.save()
