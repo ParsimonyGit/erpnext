@@ -10,6 +10,9 @@ def get_payouts(shopify_settings):
 	# if shopify_settings.last_sync_datetime:
 	# 	kwargs['date_min'] = shopify_settings.last_sync_datetime
 
+	session = shopify_settings.get_shopify_session()
+	Payouts.activate_session(session)
+
 	try:
 		payouts = PaginatedIterator(Payouts.find(**kwargs))
 	except Exception as e:
@@ -17,6 +20,8 @@ def get_payouts(shopify_settings):
 		return []
 	else:
 		return payouts
+	finally:
+		Payouts.clear_session()
 
 
 def get_shopify_document(doctype, shopify_order_id):
@@ -34,10 +39,9 @@ def sync_payouts_from_shopify():
 	if not shopify_settings.enable_shopify:
 		return
 
-	with shopify_settings.get_shopify_session(temp=True):
-		payouts = get_payouts(shopify_settings)
-		create_shopify_payouts(payouts)
-		# frappe.enqueue(method=create_shopify_payouts, queue='long', **{"payouts": payouts})
+	payouts = get_payouts(shopify_settings)
+	create_shopify_payouts(payouts)
+	# frappe.enqueue(method=create_shopify_payouts, queue='long', **{"payouts": payouts})
 
 	shopify_settings.last_sync_datetime = now()
 	shopify_settings.save()

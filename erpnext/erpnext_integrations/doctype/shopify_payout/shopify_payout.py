@@ -21,9 +21,6 @@ from frappe.utils import cint
 class ShopifyPayout(Document):
 	settings = frappe.get_single("Shopify Settings")
 
-	def on_update(self):
-		self.create_payout_journal_entry()
-
 	def before_submit(self):
 		"""
 		Before submitting a Payout, check the following:
@@ -50,10 +47,12 @@ class ShopifyPayout(Document):
 		self.create_payout_journal_entry()
 
 	# def update_shopify_payout(self):
-	# 	with self.settings.get_shopify_session(temp=True):
-	# 		payout = Payouts.find(cint(self.payout_id))
-	# 		create_or_update_shopify_payout(payout, payout_doc=self)
-	# 		self.load_from_db()
+	# 	session = self.settings.get_shopify_session()
+	# 	Payouts.activate_session(session)
+	# 	payout = Payouts.find(cint(self.payout_id))
+	# 	Payouts.clear_session()
+	# 	create_or_update_shopify_payout(payout, payout_doc=self)
+	# 	self.load_from_db()
 
 	def create_missing_orders(self):
 		for transaction in self.transactions:
@@ -62,10 +61,13 @@ class ShopifyPayout(Document):
 			if not shopify_order_id:
 				continue
 
-			with self.settings.get_shopify_session(temp=True):
-				order = Order.find(cint(shopify_order_id))
-				if not order:
-					continue
+			session = self.settings.get_shopify_session()
+			Order.activate_session(session)
+			order = Order.find(cint(shopify_order_id))
+			Order.clear_session()
+
+			if not order:
+				continue
 
 			sales_order = get_shopify_document("Sales Order", shopify_order_id)
 			sales_invoice = get_shopify_document("Sales Invoice", shopify_order_id)
@@ -95,10 +97,13 @@ class ShopifyPayout(Document):
 			if not transaction.source_order_id:
 				continue
 
-			with self.settings.get_shopify_session(temp=True):
-				shopify_order = Order.find(cint(transaction.source_order_id))
-				if not shopify_order:
-					continue
+			session = self.settings.get_shopify_session()
+			Order.activate_session(session)
+			shopify_order = Order.find(cint(transaction.source_order_id))
+			Order.clear_session()
+
+			if not shopify_order:
+				continue
 
 			if not shopify_order.cancelled_at:
 				continue
@@ -132,11 +137,15 @@ class ShopifyPayout(Document):
 			if transaction.sales_invoice and transaction.source_order_id}
 
 		for sales_invoice_id, shopify_order_id in invoices.items():
-			with self.settings.get_shopify_session(temp=True):
-				shopify_order = Order.find(cint(shopify_order_id))
-				if not shopify_order:
-					continue
+			session = self.settings.get_shopify_session()
+			Order.activate_session(session)
+			shopify_order = Order.find(cint(shopify_order_id))
+			Order.clear_session()
 
+			if not shopify_order:
+				continue
+
+			# TODO: handle partial refunds
 			is_order_refunded = shopify_order.financial_status == "refunded"
 			is_invoice_returned = frappe.db.get_value("Sales Invoice", sales_invoice_id, "status") in ["Return",
 				"Credit Note Issued"]
@@ -148,9 +157,6 @@ class ShopifyPayout(Document):
 				return_invoice.submit()
 
 	def create_payout_journal_entry(self):
-		journal_entry = frappe.new_doc("Journal Entry")
-		journal_entry.posting_date = frappe.utils.today()
-
 		entries = []
 
 		# make payout cash entry
@@ -224,11 +230,13 @@ def get_fee_entry(payout, transaction, references=None):
 	if not references:
 		references = {}
 
-	with payout.settings.get_shopify_session(temp=True):
-		order_transaction = Transaction.find(
-			transaction.source_order_transaction_id,
-			order_id=transaction.source_order_id
-		)
+	session = payout.settings.get_shopify_session()
+	Transaction.activate_session(session)
+	order_transaction = Transaction.find(
+		transaction.source_order_transaction_id,
+		order_id=transaction.source_order_id
+	)
+	Transaction.clear_session()
 
 	account = None
 	if hasattr(order_transaction.receipt, "balance_transaction"):

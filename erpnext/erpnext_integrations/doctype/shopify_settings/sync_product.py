@@ -24,14 +24,18 @@ def sync_products_from_shopify():
 	if not shopify_settings.enable_shopify:
 		return
 
-	with shopify_settings.get_shopify_session(temp=True):
-		try:
-			shopify_items = PaginatedIterator(Product.find())
-		except Exception as e:
-			make_shopify_log(status="Error", exception=e, rollback=True)
-		else:
-			frappe.enqueue(method=sync_item_from_shopify, queue='long', is_async=True,
-				**{"shopify_items": shopify_items, "shopify_settings": shopify_settings})
+	session = shopify_settings.get_shopify_session()
+	Product.activate_session(session)
+
+	try:
+		shopify_items = PaginatedIterator(Product.find())
+	except Exception as e:
+		make_shopify_log(status="Error", exception=e, rollback=True)
+	else:
+		frappe.enqueue(method=sync_item_from_shopify, queue='long', is_async=True,
+			**{"shopify_items": shopify_items, "shopify_settings": shopify_settings})
+	finally:
+		Product.clear_session()
 
 	return True
 

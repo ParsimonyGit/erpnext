@@ -24,6 +24,7 @@ class ShopifySettings(Document):
 
 		args = (self.shopify_url, self.api_version, self.get_password("password"))
 		if temp:
+			# careful using this, this may cause issues with auth and logouts
 			return Session.temp(*args)
 		return Session(*args)
 
