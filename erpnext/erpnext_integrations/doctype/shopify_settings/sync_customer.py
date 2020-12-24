@@ -3,8 +3,10 @@ from frappe import _
 from frappe.utils import cstr
 
 
-def create_customer(shopify_customer, shopify_settings):
+def create_customer(shopify_customer):
 	import frappe.utils.nestedset
+
+	shopify_settings = frappe.get_single("Shopify Settings")
 
 	if shopify_customer.get("first_name"):
 		first_name = cstr(shopify_customer.get("first_name"))

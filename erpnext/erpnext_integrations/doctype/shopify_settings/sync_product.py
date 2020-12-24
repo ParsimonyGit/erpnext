@@ -40,24 +40,25 @@ def sync_products_from_shopify():
 	return True
 
 
-def sync_item_from_shopify(shopify_items, shopify_settings):
+def sync_item_from_shopify(shopify_items):
 	for page in shopify_items:
 		for shopify_item in page:
-			make_item(shopify_settings.warehouse, shopify_item.to_dict())
+			make_item(shopify_item.to_dict())
 
 
-def make_item(warehouse, shopify_item):
+def make_item(shopify_item):
+	shopify_settings = frappe.get_single("Shopify Settings")
 	add_item_weight(shopify_item)
 
 	if has_variants(shopify_item):
 		attributes = create_attribute(shopify_item)
-		create_item(shopify_item, warehouse, 1, attributes)
-		create_item_variants(shopify_item, warehouse, attributes)
+		create_item(shopify_item, shopify_settings.warehouse, 1, attributes)
+		create_item_variants(shopify_item, shopify_settings.warehouse, attributes)
 	else:
 		variants = shopify_item.get('variants', [])
 		if len(variants) > 0:
 			shopify_item["variant_id"] = variants[0]["id"]
-		create_item(shopify_item, warehouse)
+		create_item(shopify_item, shopify_settings.warehouse)
 
 
 def add_item_weight(shopify_item):

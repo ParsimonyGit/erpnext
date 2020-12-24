@@ -4,13 +4,12 @@
 
 from collections import defaultdict
 
-from shopify import Payouts, Order, Transaction
+from shopify import Order, Payouts, Transaction
 
 import frappe
-from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_sales_return
 from erpnext.erpnext_integrations.connectors.shopify_connection import (
-	create_shopify_delivery, create_shopify_invoice, create_shopify_order,
-	get_tax_account_head)
+	create_sales_return, create_shopify_delivery, create_shopify_invoice,
+	create_shopify_order, get_tax_account_head)
 from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log
 from erpnext.erpnext_integrations.doctype.shopify_settings.sync_payout import (
 	create_or_update_shopify_payout, get_shopify_document)
@@ -55,17 +54,15 @@ class ShopifyPayout(Document):
 	# 	self.load_from_db()
 
 	def create_missing_orders(self):
+		session = self.settings.get_shopify_session()
+		Order.activate_session(session)
+
 		for transaction in self.transactions:
 			shopify_order_id = transaction.source_order_id
-
 			if not shopify_order_id:
 				continue
 
-			session = self.settings.get_shopify_session()
-			Order.activate_session(session)
 			order = Order.find(cint(shopify_order_id))
-			Order.clear_session()
-
 			if not order:
 				continue
 
@@ -91,16 +88,19 @@ class ShopifyPayout(Document):
 				"delivery_note": delivery_note
 			})
 
+		Order.clear_session()
+
 	def update_cancelled_shopify_orders(self):
 		doctypes = ["Delivery Note", "Sales Invoice", "Sales Order"]
+
+		session = self.settings.get_shopify_session()
+		Order.activate_session(session)
+
 		for transaction in self.transactions:
 			if not transaction.source_order_id:
 				continue
 
-			session = self.settings.get_shopify_session()
-			Order.activate_session(session)
 			shopify_order = Order.find(cint(transaction.source_order_id))
-			Order.clear_session()
 
 			if not shopify_order:
 				continue
@@ -132,29 +132,32 @@ class ShopifyPayout(Document):
 
 				transaction.db_set(doctype_field, None)
 
+		Order.clear_session()
+
 	def create_sales_returns(self):
 		invoices = {transaction.sales_invoice: transaction.source_order_id for transaction in self.transactions
 			if transaction.sales_invoice and transaction.source_order_id}
 
+		session = self.settings.get_shopify_session()
+		Order.activate_session(session)
+
 		for sales_invoice_id, shopify_order_id in invoices.items():
-			session = self.settings.get_shopify_session()
-			Order.activate_session(session)
 			shopify_order = Order.find(cint(shopify_order_id))
-			Order.clear_session()
 
 			if not shopify_order:
 				continue
 
-			# TODO: handle partial refunds
-			is_order_fully_refunded = shopify_order.financial_status == "refunded"
-			is_invoice_returned = frappe.db.get_value("Sales Invoice", sales_invoice_id, "status") in ["Return",
-				"Credit Note Issued"]
+			if shopify_order.financial_status not in ["refunded", "partially_refunded"]:
+				continue
 
-			if is_order_fully_refunded and not is_invoice_returned:
-				# TODO: use correct posting date for returns
-				return_invoice = make_sales_return(sales_invoice_id)
-				return_invoice.save()
-				return_invoice.submit()
+			is_invoice_returned = frappe.db.get_value("Sales Invoice", sales_invoice_id, "status") in \
+				["Return", "Credit Note Issued"]
+
+			if not is_invoice_returned:
+				si_doc = frappe.get_doc("Sales Invoice", sales_invoice_id)
+				create_sales_return(shopify_order, si_doc)
+
+		Order.clear_session()
 
 	def create_payout_journal_entry(self):
 		entries = []
