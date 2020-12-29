@@ -590,6 +590,7 @@
                             }
                         },
                         "Darlehen (Gruppe)": {
+                            "is_group": 1,
                             "Darlehen": {
                                 "account_number": "1360"
                             },
@@ -1531,6 +1532,7 @@
         },
         "Passiva - Eigenkapital": {
             "root_type": "Equity",
+            "is_group": 1,
             "A - Eigenkapital": {
                 "account_type": "Equity",
                 "is_group": 1,

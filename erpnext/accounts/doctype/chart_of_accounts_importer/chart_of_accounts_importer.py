@@ -1,25 +1,18 @@
 # Copyright (c) 2019, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-
 import csv
 import os
+from collections import defaultdict
 from functools import reduce
 
 import frappe
+from erpnext.accounts.doctype.account.chart_of_accounts.chart_of_accounts import build_tree_from_json, create_charts
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, cstr
 from frappe.utils.csvutils import UnicodeWriter
-from frappe.utils.xlsxutils import (
-	read_xls_file_from_attached_file,
-	read_xlsx_file_from_attached_file,
-)
-
-from erpnext.accounts.doctype.account.chart_of_accounts.chart_of_accounts import (
-	build_tree_from_json,
-	create_charts,
-)
+from frappe.utils.xlsxutils import read_xls_file_from_attached_file, read_xlsx_file_from_attached_file
 
 
 class ChartofAccountsImporter(Document):
@@ -179,14 +172,14 @@ def build_forest(data):
 	converts list of list into a nested tree
 	if a = [[1,1], [1,2], [3,2], [4,4], [5,4]]
 	tree = {
-	        1: {
-	                2: {
-	                        3: {}
-	                }
-	        },
-	        4: {
-	                5: {}
-	        }
+		1: {
+			2: {
+				3: {}
+			}
+		},
+		4: {
+			5: {}
+		}
 	}
 	"""
 
@@ -219,21 +212,14 @@ def build_forest(data):
 					)
 				return [child] + parent_account_list
 
-	charts_map, paths = {}, []
+	charts_map = defaultdict(dict)
+	paths = []
 
 	line_no = 2
 	error_messages = []
 
-	for i in data:
-		(
-			account_name,
-			parent_account,
-			account_number,
-			parent_account_number,
-			is_group,
-			account_type,
-			root_type,
-		) = i
+	for row in data:
+		account_name, parent_account, account_number, parent_account_number, is_group, account_type, root_type, *others = row
 
 		if not account_name:
 			error_messages.append("Row {0}: Please enter Account Name".format(line_no))
@@ -243,18 +229,22 @@ def build_forest(data):
 			account_number = cstr(account_number).strip()
 			account_name = "{} - {}".format(account_number, account_name)
 
-		charts_map[account_name] = {}
+		charts_map[account_name]["is_group"] = cint(is_group)
 		charts_map[account_name]["account_name"] = name
-		if account_number:
-			charts_map[account_name]["account_number"] = account_number
-		if cint(is_group) == 1:
-			charts_map[account_name]["is_group"] = is_group
 		if account_type:
 			charts_map[account_name]["account_type"] = account_type
 		if root_type:
 			charts_map[account_name]["root_type"] = root_type
-		path = return_parent(data, account_name)[::-1]
-		paths.append(path)  # List of path is created
+		if account_number:
+			charts_map[account_name]["account_number"] = account_number
+		if others and others[0]:  # currency
+			charts_map[account_name]["account_currency"] = others[0]
+
+		# create a list of paths
+		path = return_parent(data, account_name)
+		path.reverse()
+		paths.append(path)
+
 		line_no += 1
 
 	if error_messages:
@@ -262,10 +252,9 @@ def build_forest(data):
 
 	out = {}
 	for path in paths:
-		for n, account_name in enumerate(path):
-			set_nested(
-				out, path[: n + 1], charts_map[account_name]
-			)  # setting the value of nested dictionary.
+		for n, account_name in enumerate(path, 1):
+			# setting the value of nested dictionary.
+			set_nested(out, path[:n], charts_map[account_name])
 
 	return out
 
@@ -315,6 +304,7 @@ def get_template(template_type):
 		"Is Group",
 		"Account Type",
 		"Root Type",
+		"Currency",
 	]
 	writer = UnicodeWriter()
 	writer.writerow(fields)
