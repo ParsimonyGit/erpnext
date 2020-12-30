@@ -76,10 +76,6 @@ class AccountsController(TransactionBase):
 
 		if self.meta.get_field("currency"):
 			self.calculate_taxes_and_totals()
-
-			if not self.meta.get_field("is_return") or not self.is_return:
-				self.validate_value("base_grand_total", ">=", 0)
-
 			validate_return(self)
 			self.set_total_in_words()
 
