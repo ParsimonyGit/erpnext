@@ -29,8 +29,7 @@
    "fieldname": "transaction_id",
    "fieldtype": "Data",
    "label": "Transaction ID",
-   "read_only": 1,
-   "unique": 1
+   "read_only": 1
   },
   {
    "fieldname": "cb_transaction",
@@ -153,7 +152,7 @@
   }
  ],
  "istable": 1,
- "modified": "2020-12-23 01:52:48.786678",
+ "modified": "2021-01-04 04:45:22.839091",
  "modified_by": "Administrator",
  "module": "ERPNext Integrations",
  "name": "Shopify Payout Transaction",

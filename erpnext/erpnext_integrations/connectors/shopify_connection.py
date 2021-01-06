@@ -233,7 +233,7 @@ def create_sales_return(shopify_order, sales_invoice):
 	session = shopify_settings.get_shopify_session()
 
 	Refund.activate_session(session)
-	refund = Refund.find(order_id=shopify_order)
+	refund = Refund.find(order_id=shopify_order.id)
 	refund_datetime = get_datetime(refund.processed_at)
 	Refund.clear_session()
 

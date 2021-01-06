@@ -114,7 +114,11 @@ def create_or_update_shopify_payout(payout, payout_doc=None):
 	payout_doc.set("transactions", [])
 	for transaction in payout_transactions:
 		shopify_order_id = transaction.source_order_id
-		order = Order.find(shopify_order_id)
+
+		order_financial_status = None
+		if shopify_order_id:
+			order = Order.find(shopify_order_id)
+			order_financial_status = frappe.unscrub(order.financial_status)
 
 		total_amount = -flt(transaction.amount) if transaction.type == "payout" else flt(transaction.amount)
 		net_amount = -flt(transaction.net) if transaction.type == "payout" else flt(transaction.net)
@@ -132,10 +136,11 @@ def create_or_update_shopify_payout(payout, payout_doc=None):
 			"delivery_note": get_shopify_document("Delivery Note", shopify_order_id),
 			"source_id": transaction.source_id,
 			"source_type": frappe.unscrub(transaction.source_type),
-			"source_order_financial_status": frappe.unscrub(order.financial_status),
+			"source_order_financial_status": order_financial_status,
 			"source_order_id": shopify_order_id,
 			"source_order_transaction_id": transaction.source_order_transaction_id,
 		})
 
 	payout_doc.save()
+	frappe.db.commit()
 	return payout_doc.name

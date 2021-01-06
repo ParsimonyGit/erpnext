@@ -42,7 +42,7 @@ class ShopifyPayout(Document):
 		"""
 
 		self.update_cancelled_shopify_orders()
-		self.create_sales_returns()
+		# self.create_sales_returns()
 		self.create_payout_journal_entry()
 
 	# def update_shopify_payout(self):
