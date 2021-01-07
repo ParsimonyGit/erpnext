@@ -42,7 +42,7 @@ class ShopifyPayout(Document):
 		"""
 
 		self.update_cancelled_shopify_orders()
-		# self.create_sales_returns()
+		self.create_sales_returns()
 		self.create_payout_journal_entry()
 
 	# def update_shopify_payout(self):
@@ -135,29 +135,24 @@ class ShopifyPayout(Document):
 		Order.clear_session()
 
 	def create_sales_returns(self):
-		invoices = {transaction.sales_invoice: transaction.source_order_id for transaction in self.transactions
-			if transaction.sales_invoice and transaction.source_order_id}
+		transactions = [transaction for transaction in self.transactions
+			if transaction.sales_invoice and transaction.source_order_id]
 
-		session = self.settings.get_shopify_session()
-		Order.activate_session(session)
+		if not transactions:
+			return
 
-		for sales_invoice_id, shopify_order_id in invoices.items():
-			shopify_order = Order.find(cint(shopify_order_id))
+		for transaction in transactions:
+			financial_status = frappe.scrub(transaction.source_order_financial_status)
 
-			if not shopify_order:
+			if financial_status not in ["refunded", "partially_refunded"]:
 				continue
 
-			if shopify_order.financial_status not in ["refunded", "partially_refunded"]:
-				continue
-
-			is_invoice_returned = frappe.db.get_value("Sales Invoice", sales_invoice_id, "status") in \
+			is_invoice_returned = frappe.db.get_value("Sales Invoice", transaction.sales_invoice, "status") in \
 				["Return", "Credit Note Issued"]
 
 			if not is_invoice_returned:
-				si_doc = frappe.get_doc("Sales Invoice", sales_invoice_id)
-				create_sales_return(shopify_order, si_doc)
-
-		Order.clear_session()
+				si_doc = frappe.get_doc("Sales Invoice", transaction.sales_invoice)
+				create_sales_return(transaction.source_order_id, financial_status, si_doc)
 
 	def create_payout_journal_entry(self):
 		entries = []

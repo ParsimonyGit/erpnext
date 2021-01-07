@@ -28,12 +28,12 @@ def sync_sales_order(order, request_id=None):
 	Create the following from a Shopify order:
 
 		- Sales Order
-		- Sales Invoice and Payment Entry (if paid)
+		- Sales Invoice (if paid)
 		- Delivery Note (if fulfilled)
 
 	Args:
 
-		order (dict): The Shopify order data
+		order (dict): The Shopify order data.
 		request_id (str, optional): The ID of the existing Shopify Log document
 			for this request. Defaults to None.
 	"""
@@ -78,7 +78,7 @@ def create_shopify_invoice(order, so, request_id=None):
 	try:
 		si = create_sales_invoice(order, so)
 		if si:
-			create_sales_return(order, si)
+			create_sales_return(order.get("id"), order.get("financial_status"), si)
 	except Exception as e:
 		make_shopify_log(status="Error", response_data=order, exception=e)
 	else:
@@ -207,8 +207,8 @@ def create_sales_invoice(shopify_order, sales_order):
 	if not cint(shopify_settings.sync_sales_invoice):
 		return
 
-	if not frappe.db.get_value("Sales Invoice", {"shopify_order_id": shopify_order.get("id")}, "name") \
-		and sales_order.docstatus == 1 and not sales_order.per_billed:
+	if sales_order.docstatus == 1 and not sales_order.per_billed and \
+		not frappe.db.get_value("Sales Invoice", {"shopify_order_id": shopify_order.get("id")}, "name"):
 
 		si = make_sales_invoice(sales_order.name, ignore_permissions=True)
 		si.shopify_order_id = shopify_order.get("id")
@@ -228,13 +228,26 @@ def create_sales_invoice(shopify_order, sales_order):
 		return si.name
 
 
-def create_sales_return(shopify_order, sales_invoice):
+def create_sales_return(shopify_order_id, shopify_financial_status, sales_invoice):
+	"""
+	Create a Sales Invoice return for the given Shopify order
+
+	Args:
+		shopify_order_id (int): The Shopify order ID.
+		shopify_financial_status (str): The financial status of the Shopify order.
+			Should be one of: refunded, partially_refunded.
+		sales_invoice (SalesInvoice): The Sales Invoice document.
+
+	Returns:
+		SalesInvoice: The Sales Invoice return document.
+	"""
+
 	shopify_settings = frappe.get_doc("Shopify Settings")
 	session = shopify_settings.get_shopify_session()
 
 	Refund.activate_session(session)
-	refund = Refund.find(order_id=shopify_order.id)
-	refund_datetime = get_datetime(refund.processed_at)
+	refunds = Refund.find(order_id=shopify_order_id)
+	refund_datetime = min([get_datetime(refund.processed_at or refund.created_at) for refund in refunds])
 	Refund.clear_session()
 
 	return_invoice = make_sales_return(sales_invoice.name)
@@ -242,11 +255,40 @@ def create_sales_return(shopify_order, sales_invoice):
 	return_invoice.posting_date = refund_datetime.date()
 	return_invoice.posting_time = refund_datetime.time()
 
-	# TODO: handle returns
-	if shopify_order.financial_status == "refunded":
-		pass
-	elif shopify_order.financial_status == "partially_refunded":
-		pass
+	if shopify_financial_status == "partially_refunded":
+		# TODO: change to a different default
+		refund_account = get_tax_account_head({"title": "Payout"})
+
+		for refund in refunds:
+			refunded_items = [item.line_item.product_id for item in refund.refund_line_items
+				if item.line_item.product_id]
+			refunded_variants = [item.line_item.variant_id for item in refund.refund_line_items
+				if item.line_item.variant_id]
+
+			for item in return_invoice.items:
+				# for partial refunds, check each item for refunds
+				shopify_product_id = frappe.db.get_value("Item", item.item_code, "shopify_product_id")
+				shopify_variant_id = frappe.db.get_value("Item", item.item_code, "shopify_variant_id")
+				if shopify_product_id in refunded_items or shopify_variant_id in refunded_variants:
+					continue
+
+				# set item values for non-refunded items to zero;
+				# preferring this over removal of the item to avoid zero-item
+				# refunds and downstream effects for other documents
+				item.qty = 0
+				item.base_rate = 0
+				item.base_amount = 0
+
+			# add any additional adjustments as charges
+			return_invoice.set("taxes", [])
+			adjustments = refund.order_adjustments
+			for adjustment in adjustments:
+				return_invoice.append("taxes", {
+					"charge_type": "Actual",
+					"account_head": refund_account,
+					"description": adjustment.reason,
+					"tax_amount": flt(adjustment.amount)
+				})
 
 	return_invoice.save()
 	return_invoice.submit()
