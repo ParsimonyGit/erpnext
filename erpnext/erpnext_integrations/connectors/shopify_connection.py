@@ -92,7 +92,7 @@ def create_shopify_delivery(order, so, request_id=None):
 		return
 
 	try:
-		delivery_notes = create_delivery_note(order, so)
+		delivery_notes = create_delivery_notes(order, so)
 	except Exception as e:
 		make_shopify_log(status="Error", response_data=order, exception=e)
 		return
@@ -105,7 +105,7 @@ def prepare_sales_invoice(order, request_id=None):
 	frappe.flags.request_id = request_id
 
 	try:
-		sales_order = get_sales_order(cstr(order['id']))
+		sales_order = get_shopify_document("Sales Order", cstr(order['id']))
 		if sales_order:
 			create_sales_invoice(order, sales_order)
 			make_shopify_log(status="Success", response_data=order)
@@ -118,9 +118,9 @@ def prepare_delivery_note(order, request_id=None):
 	frappe.flags.request_id = request_id
 
 	try:
-		sales_order = get_sales_order(cstr(order['id']))
+		sales_order = get_shopify_document("Sales Order", cstr(order['id']))
 		if sales_order:
-			create_delivery_note(order, sales_order)
+			create_delivery_notes(order, sales_order)
 		make_shopify_log(status="Success", response_data=order)
 	except Exception as e:
 		make_shopify_log(status="Error", response_data=order, exception=e, rollback=True)
@@ -132,20 +132,13 @@ def cancel_shopify_order(order, request_id=None):
 
 	doctypes = ["Delivery Note", "Sales Invoice", "Sales Order"]
 	for doctype in doctypes:
-		name = frappe.db.get_value(doctype, {"docstatus": 1, "shopify_order_id": cstr(order['id'])})
-		if name:
+		doc = get_shopify_document(doctype, cstr(order['id']))
+		if doc:
 			try:
-				frappe.get_doc(doctype, name).cancel()
+				doc.cancel()
 			except Exception as e:
 				make_shopify_log(status="Error", response_data=order,
 					exception=e, rollback=True)
-
-
-def get_sales_order(shopify_order_id):
-	sales_order = frappe.db.get_value("Sales Order", filters={"shopify_order_id": shopify_order_id})
-	if sales_order:
-		so = frappe.get_doc("Sales Order", sales_order)
-		return so
 
 
 def validate_customer(order):
@@ -207,9 +200,8 @@ def create_sales_invoice(shopify_order, sales_order):
 	if not cint(shopify_settings.sync_sales_invoice):
 		return
 
-	if sales_order.docstatus == 1 and not sales_order.per_billed and \
-		not frappe.db.get_value("Sales Invoice", {"shopify_order_id": shopify_order.get("id")}, "name"):
-
+	si = get_shopify_document("Sales Invoice", shopify_order.get("id"))
+	if not si and sales_order.docstatus == 1 and not sales_order.per_billed:
 		si = make_sales_invoice(sales_order.name, ignore_permissions=True)
 		si.shopify_order_id = shopify_order.get("id")
 		si.shopify_order_number = shopify_order.get("name")
@@ -296,7 +288,7 @@ def set_cost_center(items, cost_center):
 		item.cost_center = cost_center
 
 
-def create_delivery_note(shopify_order, so):
+def create_delivery_notes(shopify_order, so):
 	shopify_settings = frappe.get_doc("Shopify Settings")
 	if not cint(shopify_settings.sync_delivery_note):
 		return
@@ -318,7 +310,7 @@ def create_delivery_note(shopify_order, so):
 			dn.save()
 			dn.submit()
 			frappe.db.commit()
-			delivery_notes.append(dn.name)
+			delivery_notes.append(dn)
 
 	return delivery_notes
 
@@ -409,3 +401,24 @@ def get_tax_account_head(tax):
 		frappe.throw(_("Tax Account not specified for Shopify Tax '{0}'".format(tax_title)))
 
 	return tax_account
+
+
+def get_shopify_document(doctype, shopify_order_id):
+	"""
+	Get a submitted document for a Shopify order ID.
+
+	Args:
+		doctype (str): The doctype to retrieve
+		shopify_order_id (str): The Shopify order ID
+
+	Returns:
+		Document: The document for the Shopify order. Defaults to an empty object.
+	"""
+
+	name = frappe.db.get_value(doctype,
+		{"docstatus": 1, "shopify_order_id": shopify_order_id}, "name")
+
+	if name:
+		return frappe.get_doc(doctype, name)
+
+	return frappe._dict()

@@ -37,24 +37,30 @@ class ShopifySettings(Document):
 		self.update_webhooks()
 
 	def validate_access_credentials(self):
-		if not all([self.get_password("password", raise_exception=False), self.api_key, self.shopify_url]):
-			frappe.throw(_("Missing value for Password, API Key or Shopify URL"))
+		if not self.shopify_url:
+			frappe.throw(_("Missing value for Shop URL"))
+
+		if not self.get_password("password", raise_exception=False):
+			frappe.throw(_("Missing value for Password"))
 
 	def update_webhooks(self):
-		with self.get_shopify_session(temp=True):
-			if self.enable_shopify:
-				self.register_webhooks()
-			else:
-				self.unregister_webhooks()
+		if self.enable_shopify:
+			self.register_webhooks()
+		else:
+			self.unregister_webhooks()
 
 	def register_webhooks(self):
+		session = self.get_shopify_session()
+		Webhook.activate_session(session)
+
 		for topic in self.webhook_topics:
 			if Webhook.find(topic=topic):
 				continue
 
 			webhook = Webhook.create({
 				"topic": topic,
-				"address": get_webhook_address(connector_name="shopify_connection", method="store_request_data"),
+				"address": get_webhook_address(connector_name="shopify_connection",
+					method="store_request_data"),
 				"format": "json"
 			})
 
@@ -67,7 +73,12 @@ class ShopifySettings(Document):
 				make_shopify_log(status="Error", response_data=webhook.to_dict(),
 					exception=webhook.errors.full_messages(), rollback=True)
 
+		Webhook.clear_session()
+
 	def unregister_webhooks(self):
+		session = self.get_shopify_session()
+		Webhook.activate_session(session)
+
 		deleted_webhooks = []
 		for d in self.webhooks:
 			if not Webhook.exists(d.webhook_id):
@@ -85,6 +96,8 @@ class ShopifySettings(Document):
 
 		for d in deleted_webhooks:
 			self.remove(d)
+
+		Webhook.clear_session()
 
 
 @frappe.whitelist()

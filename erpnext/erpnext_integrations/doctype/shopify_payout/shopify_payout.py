@@ -10,9 +10,8 @@ import frappe
 from erpnext.controllers.accounts_controller import get_accounting_entry
 from erpnext.erpnext_integrations.connectors.shopify_connection import (
 	create_sales_return, create_shopify_delivery, create_shopify_invoice,
-	create_shopify_order, get_tax_account_head)
+	create_shopify_order, get_shopify_document, get_tax_account_head)
 from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log
-from erpnext.erpnext_integrations.doctype.shopify_settings.sync_payout import get_shopify_document
 from frappe.model.document import Document
 from frappe.utils import cint, flt
 
@@ -70,13 +69,14 @@ class ShopifyPayout(Document):
 					sales_invoice = create_shopify_invoice(order.to_dict(), sales_order)
 				if not delivery_note:
 					delivery_notes = create_shopify_delivery(order.to_dict(), sales_order)
-					delivery_note = delivery_notes[0] if delivery_notes and len(delivery_notes) > 0 else None
+					delivery_note = delivery_notes[0] if delivery_notes and \
+						len(delivery_notes) > 0 else frappe._dict()
 
 			# update the transaction with the linked documents
 			transaction.update({
-				"sales_order": sales_order,
-				"sales_invoice": sales_invoice,
-				"delivery_note": delivery_note
+				"sales_order": sales_order.name,
+				"sales_invoice": sales_invoice.name,
+				"delivery_note": delivery_note.name
 			})
 
 		Order.clear_session()

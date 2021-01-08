@@ -40,10 +40,15 @@ def sync_products_from_shopify():
 	return True
 
 
-def sync_item_from_shopify(shopify_items):
+def sync_item_from_shopify(shopify_items, shopify_settings):
+	session = shopify_settings.get_shopify_session()
+	Product.activate_session(session)
+
 	for page in shopify_items:
 		for shopify_item in page:
 			make_item(shopify_item.to_dict())
+
+	Product.clear_session()
 
 
 def make_item(shopify_item):

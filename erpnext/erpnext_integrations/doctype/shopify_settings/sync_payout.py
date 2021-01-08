@@ -1,14 +1,31 @@
 from shopify import Order, PaginatedIterator, Payouts, Transactions
 
 import frappe
+from erpnext.erpnext_integrations.connectors.shopify_connection import get_shopify_document
 from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log
 from frappe.utils import flt, getdate, now
 
 
+@frappe.whitelist()
+def sync_payouts_from_shopify():
+	"""
+	Pull and sync payouts from Shopify Payments transactions with existing orders
+	"""
+
+	shopify_settings = frappe.get_single("Shopify Settings")
+	if not shopify_settings.enable_shopify:
+		return
+
+	frappe.enqueue(method=create_shopify_payouts, queue='long', is_async=True,
+		**{"shopify_settings": shopify_settings})
+
+	return True
+
+
 def get_payouts(shopify_settings):
 	kwargs = dict()
-	# if shopify_settings.last_sync_datetime:
-	# 	kwargs['date_min'] = shopify_settings.last_sync_datetime
+	if shopify_settings.last_sync_datetime:
+		kwargs['date_min'] = shopify_settings.last_sync_datetime
 
 	session = shopify_settings.get_shopify_session()
 	Payouts.activate_session(session)
@@ -24,33 +41,12 @@ def get_payouts(shopify_settings):
 		Payouts.clear_session()
 
 
-def get_shopify_document(doctype, shopify_order_id):
-	return frappe.db.get_value(doctype,
-		{"docstatus": 1, "shopify_order_id": shopify_order_id}, "name")
-
-
-@frappe.whitelist()
-def sync_payouts_from_shopify():
-	"""
-	Pull and sync payouts from Shopify Payments transactions with existing orders
-	"""
-
-	shopify_settings = frappe.get_single("Shopify Settings")
-	if not shopify_settings.enable_shopify:
+def create_shopify_payouts(shopify_settings):
+	payouts = get_payouts(shopify_settings)
+	if not payouts:
 		return
 
-	payouts = get_payouts(shopify_settings)
-	create_shopify_payouts(payouts)
-	# frappe.enqueue(method=create_shopify_payouts, queue='long', **{"payouts": payouts})
-
-	shopify_settings.last_sync_datetime = now()
-	shopify_settings.save()
-	return True
-
-
-def create_shopify_payouts(payouts):
-	settings = frappe.get_single("Shopify Settings")
-	session = settings.get_shopify_session()
+	session = shopify_settings.get_shopify_session()
 
 	Payouts.activate_session(session)
 	Transactions.activate_session(session)
@@ -58,16 +54,20 @@ def create_shopify_payouts(payouts):
 
 	for page in payouts:
 		for payout in page:
+			payout_exists = frappe.db.exists("Shopify Payout", {"payout_id": payout.id})
 			payout_docstatus = frappe.db.get_value("Shopify Payout", {"payout_id": payout.id}, "docstatus")
 
-			# skip payout generation if one is already submitted or cancelled,
-			# and update an existing draft payout if it exists
-			if payout_docstatus is None:
+			if not payout_exists:
 				create_or_update_shopify_payout(payout)
 			elif payout_docstatus == 0:
+				# skip payout generation if one is already submitted or cancelled,
+				# and update an existing draft payout if it exists
 				payout_name = frappe.db.get_value("Shopify Payout", {"payout_id": payout.id}, "name")
 				payout_doc = frappe.get_doc("Shopify Payout", payout_name)
 				create_or_update_shopify_payout(payout, payout_doc)
+
+	shopify_settings.last_sync_datetime = now()
+	shopify_settings.save()
 
 	Payouts.clear_session()
 	Transactions.clear_session()
@@ -123,6 +123,10 @@ def create_or_update_shopify_payout(payout, payout_doc=None):
 		total_amount = -flt(transaction.amount) if transaction.type == "payout" else flt(transaction.amount)
 		net_amount = -flt(transaction.net) if transaction.type == "payout" else flt(transaction.net)
 
+		sales_order = get_shopify_document("Sales Order", shopify_order_id)
+		sales_invoice = get_shopify_document("Sales Invoice", shopify_order_id)
+		delivery_note = get_shopify_document("Delivery Note", shopify_order_id)
+
 		payout_doc.append("transactions", {
 			"transaction_id": transaction.id,
 			"transaction_type": frappe.unscrub(transaction.type),
@@ -131,9 +135,9 @@ def create_or_update_shopify_payout(payout, payout_doc=None):
 			"fee": flt(transaction.fee),
 			"net_amount": net_amount,
 			"currency": transaction.currency,
-			"sales_order": get_shopify_document("Sales Order", shopify_order_id),
-			"sales_invoice": get_shopify_document("Sales Invoice", shopify_order_id),
-			"delivery_note": get_shopify_document("Delivery Note", shopify_order_id),
+			"sales_order": sales_order.name if sales_order else None,
+			"sales_invoice": sales_invoice.name if sales_invoice else None,
+			"delivery_note": delivery_note.name if delivery_note else None,
 			"source_id": transaction.source_id,
 			"source_type": frappe.unscrub(transaction.source_type),
 			"source_order_financial_status": order_financial_status,

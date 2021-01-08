@@ -71,7 +71,7 @@ def get_address_title_and_type(customer_name, index):
 	address_title = customer_name
 
 	address_name = f"{customer_name.strip()}-{address_type}"
-	if frappe.db.get_value("Address", address_name):
+	if frappe.db.exists("Address", address_name):
 		address_title = f"{customer_name.strip()}-{index}"
 
 	return address_title, address_type
