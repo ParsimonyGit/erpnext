@@ -4,17 +4,17 @@
 
 from collections import defaultdict
 
-from shopify import Order, Payouts, Transaction
+from shopify import Order
 
 import frappe
+from erpnext.controllers.accounts_controller import get_accounting_entry
 from erpnext.erpnext_integrations.connectors.shopify_connection import (
 	create_sales_return, create_shopify_delivery, create_shopify_invoice,
 	create_shopify_order, get_tax_account_head)
 from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log
-from erpnext.erpnext_integrations.doctype.shopify_settings.sync_payout import (
-	create_or_update_shopify_payout, get_shopify_document)
+from erpnext.erpnext_integrations.doctype.shopify_settings.sync_payout import get_shopify_document
 from frappe.model.document import Document
-from frappe.utils import cint
+from frappe.utils import cint, flt
 
 
 class ShopifyPayout(Document):
@@ -28,7 +28,6 @@ class ShopifyPayout(Document):
 			- Create missing order documents for any Shopify Order
 		"""
 
-		# TODO: self.update_shopify_payout()
 		self.create_missing_orders()
 
 	def on_submit(self):
@@ -44,14 +43,6 @@ class ShopifyPayout(Document):
 		self.update_cancelled_shopify_orders()
 		self.create_sales_returns()
 		self.create_payout_journal_entry()
-
-	# def update_shopify_payout(self):
-	# 	session = self.settings.get_shopify_session()
-	# 	Payouts.activate_session(session)
-	# 	payout = Payouts.find(cint(self.payout_id))
-	# 	Payouts.clear_session()
-	# 	create_or_update_shopify_payout(payout, payout_doc=self)
-	# 	self.load_from_db()
 
 	def create_missing_orders(self):
 		session = self.settings.get_shopify_session()
@@ -163,9 +154,6 @@ class ShopifyPayout(Document):
 				if transaction.total_amount:
 					entries.append(get_amount_entry(transaction))
 
-				if transaction.fee:
-					entries.append(get_fee_entry(self, transaction))
-
 		# get the list of transactions that need to be balanced
 		payouts_by_invoice = defaultdict(list)
 		for transaction in self.transactions:
@@ -190,113 +178,50 @@ class ShopifyPayout(Document):
 				if transaction.total_amount:
 					entries.append(get_amount_entry(transaction, references))
 
-				if transaction.fee:
-					entries.append(get_fee_entry(self, transaction, references))
-
 		if entries:
 			journal_entry = frappe.new_doc("Journal Entry")
 			journal_entry.posting_date = frappe.utils.today()
 			journal_entry.set("accounts", entries)
 			journal_entry.save()
-			# journal_entry.submit()
+			journal_entry.submit()
 
 
 def get_amount_entry(transaction, references=None):
+	"""
+	Get the Journal Entry accounting entry for a Shopify transaction.
+
+	Args:
+		transaction (ShopifyPayoutTransaction): The Shopify Payout transaction data.
+		references (dict, optional): The document references for the Shopify transaction.
+			Defaults to None.
+
+	Raises:
+		frappe.ValidationError: If a transaction's charge or tax type is not
+			mapped to an account head in Shopify Settings.
+
+	Returns:
+		frappe._dict: The Journal Entry accounting entry data.
+	"""
+
 	if not references:
 		references = {}
 
 	account = None
+	amount = flt(transaction.net_amount)
+
 	if transaction.transaction_type:
-		account = get_tax_account_head({"title": transaction.transaction_type})
+		try:
+			account = get_tax_account_head({"title": transaction.transaction_type})
+		except frappe.ValidationError as e:
+			if references.get("reference_name"):
+				account = frappe.db.get_value(references.get(
+					"reference_type"), references.get("reference_name"), "debit_to")
 
-	if not account:
-		if references.get("reference_name"):
-			account = frappe.db.get_value(references.get(
-				"reference_type"), references.get("reference_name"), "debit_to")
-		else:
-			# TODO: change to a different default
-			account = get_tax_account_head({"title": "Payout"})
-
-	return get_accounting_entry(
-		account=account,
-		amount=transaction.total_amount,
-		**references
-	)
-
-
-def get_fee_entry(payout, transaction, references=None):
-	if not references:
-		references = {}
-
-	session = payout.settings.get_shopify_session()
-	Transaction.activate_session(session)
-	order_transaction = Transaction.find(
-		transaction.source_order_transaction_id,
-		order_id=transaction.source_order_id
-	)
-	Transaction.clear_session()
-
-	account = None
-	if hasattr(order_transaction.receipt, "balance_transaction"):
-		fee_details = order_transaction.receipt.balance_transaction.fee_details
-		transaction_type = fee_details[0].description
-		account = get_tax_account_head({"title": transaction_type})
-
-	if not account:
-		if references.get("reference_name"):
-			account = frappe.db.get_value(references.get(
-				"reference_type"), references.get("reference_name"), "debit_to")
-		else:
-			# TODO: change to a different default
-			account = get_tax_account_head({"title": "Payout"})
+			if not account:
+				raise e
 
 	return get_accounting_entry(
 		account=account,
-		amount=-transaction.fee,
+		amount=amount,
 		**references
 	)
-
-
-def get_accounting_entry(
-	account,
-	amount,
-	reference_type=None,
-	reference_name=None,
-	party_type=None,
-	party_name=None,
-	remark=None
-):
-	accounting_entry = frappe._dict({
-		"account": account,
-		"reference_type": reference_type,
-		"reference_name": reference_name,
-		"party_type": party_type,
-		"party": party_name,
-		"user_remark": remark
-	})
-
-	accounting_entry[get_debit_or_credit(amount, account)] = abs(amount)
-	return accounting_entry
-
-
-def get_debit_or_credit(amount, account):
-	root_type, account_type = frappe.get_cached_value(
-		"Account", account, ["root_type", "account_type"]
-	)
-
-	debit_field = "debit_in_account_currency"
-	credit_field = "credit_in_account_currency"
-
-	if root_type == "Asset":
-		if account_type in ("Receivable", "Payable"):
-			return debit_field if amount < 0 else credit_field
-		return debit_field if amount > 0 else credit_field
-	elif root_type == "Expense":
-		return debit_field if amount < 0 else credit_field
-	elif root_type == "Income":
-		return debit_field if amount > 0 else credit_field
-	elif root_type in ("Equity", "Liability"):
-		if account_type in ("Receivable", "Payable"):
-			return debit_field if amount > 0 else credit_field
-		else:
-			return debit_field if amount < 0 else credit_field

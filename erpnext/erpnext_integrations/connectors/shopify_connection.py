@@ -257,7 +257,7 @@ def create_sales_return(shopify_order_id, shopify_financial_status, sales_invoic
 
 	if shopify_financial_status == "partially_refunded":
 		# TODO: change to a different default
-		refund_account = get_tax_account_head({"title": "Payout"})
+		refund_account = get_tax_account_head({"title": "Refund"})
 
 		for refund in refunds:
 			refunded_items = [item.line_item.product_id for item in refund.refund_line_items
@@ -276,8 +276,7 @@ def create_sales_return(shopify_order_id, shopify_financial_status, sales_invoic
 				# preferring this over removal of the item to avoid zero-item
 				# refunds and downstream effects for other documents
 				item.qty = 0
-				item.base_rate = 0
-				item.base_amount = 0
+				item.discount_percentage = 100
 
 			# add any additional adjustments as charges
 			return_invoice.set("taxes", [])
@@ -383,13 +382,13 @@ def get_order_taxes(shopify_order, shopify_settings):
 			"cost_center": shopify_settings.cost_center
 		})
 
-	taxes = update_taxes_with_shipping_lines(taxes, shopify_order.get("shipping_lines"),
-		shopify_settings.cost_center)
+	taxes = update_taxes_with_shipping_lines(taxes,
+		shopify_order.get("shipping_lines"), shopify_settings)
 
 	return taxes
 
 
-def update_taxes_with_shipping_lines(taxes, shipping_lines, cost_center):
+def update_taxes_with_shipping_lines(taxes, shipping_lines, shopify_settings):
 	"""Shipping lines represents the shipping details,
 		each such shipping detail consists of a list of tax_lines"""
 	for shipping_charge in shipping_lines:
@@ -399,7 +398,7 @@ def update_taxes_with_shipping_lines(taxes, shipping_lines, cost_center):
 				"account_head": get_tax_account_head(shipping_charge),
 				"description": shipping_charge["title"],
 				"tax_amount": shipping_charge["price"],
-				"cost_center": cost_center
+				"cost_center": shopify_settings.cost_center
 			})
 
 		for tax in shipping_charge.get("tax_lines"):
@@ -408,7 +407,7 @@ def update_taxes_with_shipping_lines(taxes, shipping_lines, cost_center):
 				"account_head": get_tax_account_head(tax),
 				"description": tax["title"],
 				"tax_amount": tax["price"],
-				"cost_center": cost_center
+				"cost_center": shopify_settings.cost_center
 			})
 
 	return taxes
@@ -416,20 +415,10 @@ def update_taxes_with_shipping_lines(taxes, shipping_lines, cost_center):
 
 def get_tax_account_head(tax):
 	tax_title = tax.get("title").encode("utf-8")
-
 	tax_account = frappe.db.get_value("Shopify Tax Account",
 		{"parent": "Shopify Settings", "shopify_tax": tax_title}, "tax_account")
 
 	if not tax_account:
-		# frappe.throw(_("Tax Account not specified for Shopify Tax '{0}'".format(tax.get("title"))))
-
-		tax_account = "618300 - Postage and Shipping - PS"
-		settings = frappe.get_single("Shopify Settings")
-		settings.append("taxes", {
-			"shopify_tax": tax_title,
-			"tax_account": tax_account
-		})
-		settings.flags.ignore_validate = True
-		settings.save()
+		frappe.throw(_("Tax Account not specified for Shopify Tax '{0}'".format(tax_title)))
 
 	return tax_account
