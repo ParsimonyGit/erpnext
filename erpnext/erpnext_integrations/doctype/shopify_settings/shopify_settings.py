@@ -14,8 +14,9 @@ from frappe.model.document import Document
 
 
 class ShopifySettings(Document):
-	api_version = "2020-10"
-	webhook_topics = ["orders/create", "orders/paid", "orders/fulfilled"]
+	api_version = "2021-01"
+	webhook_topics = ["orders/create", "orders/paid",
+		"orders/fulfilled", "orders/cancelled"]
 
 	def get_shopify_session(self, temp=False):
 		if not self.enable_shopify:

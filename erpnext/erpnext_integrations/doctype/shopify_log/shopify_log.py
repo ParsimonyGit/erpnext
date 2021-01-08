@@ -52,7 +52,7 @@ def get_message(exception):
 	return message
 
 
-def dump_request_data(data, event="create/order"):
+def dump_request_data(data, event="orders/create"):
 	event_mapper = {
 		"orders/create": get_webhook_address(connector_name='shopify_connection', method="sync_sales_order", exclude_uri=True),
 		"orders/paid": get_webhook_address(connector_name='shopify_connection', method="prepare_sales_invoice", exclude_uri=True),
