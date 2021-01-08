@@ -221,9 +221,6 @@ def create_sales_invoice(shopify_order, sales_order):
 		si.insert(ignore_mandatory=True)
 		si.submit()
 
-		# if si.grand_total > 0:
-		# 	make_payment_entry_against_sales_invoice(si, shopify_settings)
-
 		frappe.db.commit()
 		return si.name
 
@@ -297,16 +294,6 @@ def create_sales_return(shopify_order_id, shopify_financial_status, sales_invoic
 def set_cost_center(items, cost_center):
 	for item in items:
 		item.cost_center = cost_center
-
-
-# def make_payment_entry_against_sales_invoice(doc, shopify_settings):
-# 	from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
-# 	payment_entry = get_payment_entry(doc.doctype, doc.name, bank_account=shopify_settings.cash_bank_account)
-# 	payment_entry.flags.ignore_mandatory = True
-# 	payment_entry.reference_no = doc.name
-# 	payment_entry.reference_date = nowdate()
-# 	payment_entry.insert(ignore_permissions=True)
-# 	payment_entry.submit()
 
 
 def create_delivery_note(shopify_order, so):
