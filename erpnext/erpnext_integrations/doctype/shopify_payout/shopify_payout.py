@@ -23,7 +23,6 @@ class ShopifyPayout(Document):
 		"""
 		Before submitting a Payout, check the following:
 
-			- Update the Payout with the latest info from Shopify (WIP)
 			- Create missing order documents for any Shopify Order
 		"""
 
@@ -34,12 +33,15 @@ class ShopifyPayout(Document):
 		On submit of a Payout, do the following:
 
 			- If a Shopify Order is cancelled, update all linked documents in ERPNext
+			- Find a draft Sales Invoice against the Shopify order, update it with
+				new payment fees and charges, and submit the invoice
 			- If a Shopify Order has been fully returned, make a sales return in ERPNext
 			- Create a Journal Entry to balance all existing transactions
 				with additional fees and charges from Shopify, if any
 		"""
 
 		self.update_cancelled_shopify_orders()
+		self.update_shopify_payment_fees()
 		self.create_sales_returns()
 		self.create_payout_journal_entry()
 
@@ -92,11 +94,7 @@ class ShopifyPayout(Document):
 				continue
 
 			shopify_order = Order.find(cint(transaction.source_order_id))
-
-			if not shopify_order:
-				continue
-
-			if not shopify_order.cancelled_at:
+			if not shopify_order or not shopify_order.cancelled_at:
 				continue
 
 			for doctype in doctypes:
@@ -107,6 +105,10 @@ class ShopifyPayout(Document):
 					continue
 
 				doc = frappe.get_doc(doctype, docname)
+
+				# do not try and cancel draft or cancelled documents
+				if doc.docstatus != 1:
+					continue
 
 				# do not cancel refunded orders
 				if doctype == "Sales Invoice" and doc.status in ["Return", "Credit Note Issued"]:
@@ -124,6 +126,31 @@ class ShopifyPayout(Document):
 				transaction.db_set(doctype_field, None)
 
 		Order.clear_session()
+
+	def update_shopify_payment_fees(self):
+		payouts_by_invoice = defaultdict(list)
+		for transaction in self.transactions:
+			if transaction.sales_invoice:
+				payouts_by_invoice[transaction.sales_invoice].append(transaction)
+
+		for invoice_id, order_transactions in payouts_by_invoice.items():
+			invoice = frappe.get_doc("Sales Invoice", invoice_id)
+			if invoice.docstatus != 0:
+				continue
+
+			for transaction in order_transactions:
+				if not transaction.fee:
+					continue
+
+				invoice.append("taxes", {
+					"charge_type": "Actual",
+					"account_head": get_tax_account_head({"title": transaction.transaction_type}),
+					"description": transaction.transaction_type,
+					"tax_amount": flt(transaction.fee)
+				})
+
+			invoice.save()
+			invoice.submit()
 
 	def create_sales_returns(self):
 		transactions = [transaction for transaction in self.transactions

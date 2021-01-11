@@ -211,8 +211,6 @@ def create_sales_invoice(shopify_order, sales_order):
 		si.flags.ignore_mandatory = True
 		set_cost_center(si.items, shopify_settings.cost_center)
 		si.insert(ignore_mandatory=True)
-		si.submit()
-
 		frappe.db.commit()
 		return si.name
 
