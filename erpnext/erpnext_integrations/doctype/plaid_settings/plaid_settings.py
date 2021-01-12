@@ -227,17 +227,24 @@ def new_bank_transaction(transaction):
 
 
 def automatic_synchronization():
-	settings = frappe.get_doc("Plaid Settings", "Plaid Settings")
+	settings = frappe.get_single("Plaid Settings")
 	if settings.enabled == 1 and settings.automatic_sync == 1:
 		enqueue_synchronization()
 
 
-		for plaid_account in plaid_accounts:
-			frappe.enqueue(
-				"erpnext.erpnext_integrations.doctype.plaid_settings.plaid_settings.sync_transactions",
-				bank=plaid_account.bank,
-				bank_account=plaid_account.name
-			)
+@frappe.whitelist()
+def enqueue_synchronization():
+	plaid_accounts = frappe.get_all("Bank Account",
+		filters={"integration_id": ["!=", ""]},
+		fields=["name", "bank"])
+
+	for plaid_account in plaid_accounts:
+		frappe.enqueue(
+			"erpnext.erpnext_integrations.doctype.plaid_settings.plaid_settings.sync_transactions",
+			bank=plaid_account.bank,
+			bank_account=plaid_account.name
+		)
+
 
 @frappe.whitelist()
 def get_link_token_for_update(access_token):
