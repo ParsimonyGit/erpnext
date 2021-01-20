@@ -20,7 +20,6 @@
   "webhooks",
   "sb_company",
   "company",
-  "cash_bank_account",
   "cb_company",
   "cost_center",
   "sb_customer",
@@ -40,7 +39,11 @@
   "delivery_note_series",
   "sales_invoice_series",
   "sb_tax_accounts",
-  "taxes"
+  "tax_account",
+  "shipping_account",
+  "cb_tax_accounts",
+  "cash_bank_account",
+  "payment_fee_account"
  ],
  "fields": [
   {
@@ -137,7 +140,7 @@
    "description": "Cash Account will used for Sales Invoice creation",
    "fieldname": "cash_bank_account",
    "fieldtype": "Link",
-   "label": "Cash/Bank Account",
+   "label": "Cash/Bank/Payout Account",
    "options": "Account"
   },
   {
@@ -193,12 +196,6 @@
    "fieldname": "sales_invoice_series",
    "fieldtype": "Select",
    "label": "Sales Invoice Series"
-  },
-  {
-   "fieldname": "taxes",
-   "fieldtype": "Table",
-   "label": "Map Shopify Taxes / Shipping Charges to ERPNext Account",
-   "options": "Shopify Tax Account"
   },
   {
    "collapsible": 1,
@@ -262,10 +259,32 @@
   {
    "fieldname": "cb_auth",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "tax_account",
+   "fieldtype": "Link",
+   "label": "Tax Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "shipping_account",
+   "fieldtype": "Link",
+   "label": "Shipping Account",
+   "options": "Account"
+  },
+  {
+   "fieldname": "cb_tax_accounts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "payment_fee_account",
+   "fieldtype": "Link",
+   "label": "Payment Fee Account",
+   "options": "Account"
   }
  ],
  "issingle": 1,
- "modified": "2020-11-24 00:55:15.961555",
+ "modified": "2021-01-20 04:10:51.578511",
  "modified_by": "Administrator",
  "module": "ERPNext Integrations",
  "name": "Shopify Settings",

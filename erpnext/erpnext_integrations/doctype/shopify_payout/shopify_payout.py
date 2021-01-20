@@ -144,7 +144,7 @@ class ShopifyPayout(Document):
 
 				invoice.append("taxes", {
 					"charge_type": "Actual",
-					"account_head": get_tax_account_head({"title": transaction.transaction_type}),
+					"account_head": get_tax_account_head("fee"),
 					"description": transaction.transaction_type,
 					"tax_amount": flt(transaction.fee)
 				})
@@ -238,7 +238,7 @@ def get_amount_entry(transaction, references=None):
 
 	if transaction.transaction_type:
 		try:
-			account = get_tax_account_head({"title": transaction.transaction_type})
+			account = get_tax_account_head("payout")
 		except frappe.ValidationError as e:
 			if references.get("reference_name"):
 				account = frappe.db.get_value(references.get(

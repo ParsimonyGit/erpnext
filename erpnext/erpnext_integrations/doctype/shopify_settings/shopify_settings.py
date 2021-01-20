@@ -34,7 +34,8 @@ class ShopifySettings(Document):
 			setup_custom_fields()
 			self.validate_access_credentials()
 
-		self.update_webhooks()
+		if not frappe.conf.developer_mode:
+			self.update_webhooks()
 
 	def validate_access_credentials(self):
 		if not self.shopify_url:
