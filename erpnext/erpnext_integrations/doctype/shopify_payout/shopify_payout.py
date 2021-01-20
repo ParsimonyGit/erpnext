@@ -157,7 +157,9 @@ class ShopifyPayout(Document):
 				if transaction.total_amount:
 					entries.append(get_amount_entry(transaction, references))
 
-		if entries:
+		# only create a JE if any of the payout transactions has been invoiced;
+		# the first entry will always be the summary payout entry
+		if entries and len(entries) > 1:
 			journal_entry = frappe.new_doc("Journal Entry")
 			journal_entry.posting_date = frappe.utils.today()
 			journal_entry.set("accounts", entries)

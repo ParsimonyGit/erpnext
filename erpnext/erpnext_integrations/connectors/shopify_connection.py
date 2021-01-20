@@ -309,11 +309,11 @@ def create_delivery_notes(shopify_order, so):
 			and so.docstatus == 1:
 
 			dn = make_delivery_note(so.name)
-			dn.shopify_order_id = fulfillment.get("order_id")
+			dn.shopify_order_id = shopify_order.get("id")
 			dn.shopify_order_number = shopify_order.get("name")
+			dn.shopify_fulfillment_id = fulfillment.get("id")
 			dn.set_posting_time = 1
 			dn.posting_date = getdate(fulfillment.get("created_at"))
-			dn.shopify_fulfillment_id = fulfillment.get("id")
 			dn.naming_series = shopify_settings.delivery_note_series or "DN-Shopify-"
 			dn.items = get_fulfillment_items(dn.items, fulfillment.get("line_items"))
 			dn.flags.ignore_mandatory = True
@@ -425,20 +425,18 @@ def get_tax_account_head(tax_type):
 
 def get_shopify_document(doctype, shopify_order_id):
 	"""
-	Get a submitted document for a Shopify order ID.
+	Get the linked document for a Shopify order ID.
 
 	Args:
 		doctype (str): The doctype to retrieve
 		shopify_order_id (str): The Shopify order ID
 
 	Returns:
-		Document: The document for the Shopify order. Defaults to an empty object.
+		Document: The document for the Shopify order. Defaults to an
+			empty object if no document is found.
 	"""
 
-	name = frappe.db.get_value(doctype,
-		{"docstatus": 1, "shopify_order_id": shopify_order_id}, "name")
-
+	name = frappe.db.get_value(doctype, {"shopify_order_id": shopify_order_id}, "name")
 	if name:
 		return frappe.get_doc(doctype, name)
-
 	return frappe._dict()
