@@ -9,8 +9,7 @@ from shopify import Order
 import frappe
 from erpnext.controllers.accounts_controller import get_accounting_entry
 from erpnext.erpnext_integrations.connectors.shopify_connection import (
-	create_sales_return, create_shopify_delivery, create_shopify_invoice,
-	create_shopify_order, get_shopify_document, get_tax_account_head)
+	create_sales_return, get_tax_account_head)
 from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log
 from frappe.model.document import Document
 from frappe.utils import cint, flt
@@ -18,15 +17,6 @@ from frappe.utils import cint, flt
 
 class ShopifyPayout(Document):
 	settings = frappe.get_single("Shopify Settings")
-
-	def before_submit(self):
-		"""
-		Before submitting a Payout, check the following:
-
-			- Create missing order documents for any Shopify Order
-		"""
-
-		self.create_missing_orders()
 
 	def on_submit(self):
 		"""
@@ -44,44 +34,6 @@ class ShopifyPayout(Document):
 		self.update_shopify_payment_fees()
 		self.create_sales_returns()
 		self.create_payout_journal_entry()
-
-	def create_missing_orders(self):
-		session = self.settings.get_shopify_session()
-		Order.activate_session(session)
-
-		for transaction in self.transactions:
-			shopify_order_id = transaction.source_order_id
-			if not shopify_order_id:
-				continue
-
-			order = Order.find(cint(shopify_order_id))
-			if not order:
-				continue
-
-			sales_order = get_shopify_document("Sales Order", shopify_order_id)
-			sales_invoice = get_shopify_document("Sales Invoice", shopify_order_id)
-			delivery_note = get_shopify_document("Delivery Note", shopify_order_id)
-
-			# create an order, invoice and delivery, if missing
-			if not sales_order:
-				sales_order = create_shopify_order(order.to_dict())
-
-			if sales_order:
-				if not sales_invoice:
-					sales_invoice = create_shopify_invoice(order.to_dict(), sales_order)
-				if not delivery_note:
-					delivery_notes = create_shopify_delivery(order.to_dict(), sales_order)
-					delivery_note = delivery_notes[0] if delivery_notes and \
-						len(delivery_notes) > 0 else frappe._dict()
-
-			# update the transaction with the linked documents
-			transaction.update({
-				"sales_order": sales_order.name,
-				"sales_invoice": sales_invoice.name,
-				"delivery_note": delivery_note.name
-			})
-
-		Order.clear_session()
 
 	def update_cancelled_shopify_orders(self):
 		doctypes = ["Delivery Note", "Sales Invoice", "Sales Order"]

@@ -52,9 +52,9 @@ class ShopifySettings(Document):
 
 	def register_webhooks(self):
 		session = self.get_shopify_session()
-		Webhook.activate_session(session)
 
 		for topic in self.webhook_topics:
+			Webhook.activate_session(session)
 			if Webhook.find(topic=topic):
 				continue
 
@@ -65,6 +65,8 @@ class ShopifySettings(Document):
 				"format": "json"
 			})
 
+			Webhook.clear_session()
+
 			if webhook.is_valid():
 				self.append("webhooks", {
 					"webhook_id": webhook.id,
@@ -74,14 +76,13 @@ class ShopifySettings(Document):
 				make_shopify_log(status="Error", response_data=webhook.to_dict(),
 					exception=webhook.errors.full_messages(), rollback=True)
 
-		Webhook.clear_session()
-
 	def unregister_webhooks(self):
 		session = self.get_shopify_session()
-		Webhook.activate_session(session)
 
 		deleted_webhooks = []
 		for d in self.webhooks:
+			Webhook.activate_session(session)
+
 			if not Webhook.exists(d.webhook_id):
 				deleted_webhooks.append(d)
 				continue
@@ -94,11 +95,11 @@ class ShopifySettings(Document):
 				frappe.log_error(message=e, title="Shopify Webhooks Deletion Issue")
 			else:
 				deleted_webhooks.append(d)
+			finally:
+				Webhook.clear_session()
 
 		for d in deleted_webhooks:
 			self.remove(d)
-
-		Webhook.clear_session()
 
 
 @frappe.whitelist()

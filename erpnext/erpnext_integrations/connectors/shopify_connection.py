@@ -52,7 +52,7 @@ def create_shopify_order(order, request_id=None):
 	existing_so = frappe.db.get_value("Sales Order",
 		filters={
 			"docstatus": ["<", 2],
-			"shopify_order_id": cstr(order['id'])
+			"shopify_order_id": cstr(order.get('id'))
 		})
 
 	if existing_so:
@@ -105,7 +105,7 @@ def prepare_sales_invoice(order, request_id=None):
 	frappe.flags.request_id = request_id
 
 	try:
-		sales_order = get_shopify_document("Sales Order", cstr(order['id']))
+		sales_order = get_shopify_document("Sales Order", cstr(order.get('id')))
 		if sales_order:
 			create_sales_invoice(order, sales_order)
 			make_shopify_log(status="Success", response_data=order)
@@ -118,7 +118,7 @@ def prepare_delivery_note(order, request_id=None):
 	frappe.flags.request_id = request_id
 
 	try:
-		sales_order = get_shopify_document("Sales Order", cstr(order['id']))
+		sales_order = get_shopify_document("Sales Order", cstr(order.get('id')))
 		if sales_order:
 			create_delivery_notes(order, sales_order)
 		make_shopify_log(status="Success", response_data=order)
@@ -132,7 +132,7 @@ def cancel_shopify_order(order, request_id=None):
 
 	doctypes = ["Delivery Note", "Sales Invoice", "Sales Order"]
 	for doctype in doctypes:
-		doc = get_shopify_document(doctype, cstr(order['id']))
+		doc = get_shopify_document(doctype, cstr(order.get('id')))
 		if doc:
 			try:
 				doc.cancel()
@@ -150,8 +150,14 @@ def validate_customer(order):
 
 def validate_item(order):
 	for item in order.get("line_items"):
-		product_id = item.get("product_id") or item.get("id")
+		product_id = item.get("product_id")
 		if product_id and not frappe.db.exists("Item", {"shopify_product_id": product_id}):
+			make_item(item)
+
+		# Shopify somehow allows non-existent variants to be added to an order;
+		# for such cases, we force-create the item after creating the other variants
+		variant_id = item.get("variant_id")
+		if variant_id and not frappe.db.exists("Item", {"shopify_variant_id": variant_id}):
 			make_item(item)
 
 
@@ -212,7 +218,7 @@ def create_sales_invoice(shopify_order, sales_order):
 		set_cost_center(si.items, shopify_settings.cost_center)
 		si.insert(ignore_mandatory=True)
 		frappe.db.commit()
-		return si.name
+		return si
 
 
 def create_sales_return(shopify_order_id, shopify_financial_status, sales_invoice):
@@ -227,15 +233,24 @@ def create_sales_return(shopify_order_id, shopify_financial_status, sales_invoic
 
 	Returns:
 		SalesInvoice: The Sales Invoice return document.
+			If no refunds are found, return None.
 	"""
 
-	shopify_settings = frappe.get_doc("Shopify Settings")
+	shopify_settings = frappe.get_single("Shopify Settings")
 	session = shopify_settings.get_shopify_session()
 
 	Refund.activate_session(session)
 	refunds = Refund.find(order_id=shopify_order_id)
-	refund_datetime = min([get_datetime(refund.processed_at or refund.created_at) for refund in refunds])
 	Refund.clear_session()
+
+	refund_dates = [refund.processed_at or refund.created_at for refund in refunds
+		if refund.processed_at or refund.created_at]
+	if not refund_dates:
+		return
+
+	refund_datetime = min([get_datetime(date) for date in refund_dates]) if refund_dates else None
+	if not refund_datetime:
+		return
 
 	return_invoice = make_sales_return(sales_invoice.name)
 	return_invoice.set_posting_time = True
