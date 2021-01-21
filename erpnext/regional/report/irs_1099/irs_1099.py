@@ -63,7 +63,6 @@ def get_supplier_irs_data(filters):
 				AND gl.company = %(company)s
 		GROUP BY
 			gl.party
-
 		ORDER BY
 			gl.party DESC
 	""", {
