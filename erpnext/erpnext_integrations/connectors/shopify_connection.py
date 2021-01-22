@@ -342,7 +342,7 @@ def get_order_items(order_items, shopify_settings):
 			"rate": shopify_item.get("price"),
 			"delivery_date": nowdate(),
 			"qty": shopify_item.get("quantity"),
-			"stock_uom": shopify_item.get("uom") or _("Nos"),
+			"stock_uom": shopify_item.get("uom") or "Nos",
 			"warehouse": shopify_settings.warehouse
 		})
 	return items
@@ -361,43 +361,28 @@ def get_item_code(shopify_item):
 
 def get_order_taxes(shopify_order, shopify_settings):
 	taxes = []
+
+	# add shipping charges
+	for shipping in shopify_order.get("shipping_lines"):
+		if shipping.get("price"):
+			taxes.append({
+				"charge_type": "Actual",
+				"account_head": get_tax_account_head("shipping"),
+				"description": shipping.get("title"),
+				"tax_amount": shipping.get("price"),
+				"cost_center": shopify_settings.cost_center
+			})
+
+	# add additional taxes and fees
 	for tax in shopify_order.get("tax_lines"):
 		taxes.append({
-			"charge_type": _("On Net Total"),
+			"charge_type": "Actual",
 			"account_head": get_tax_account_head("tax"),
 			"description": "{0} - {1}%".format(tax.get("title"), tax.get("rate") * 100.0),
-			"rate": tax.get("rate") * 100.00,
+			"tax_amount": tax.get("price"),
+			"cost_center": shopify_settings.cost_center,
 			"included_in_print_rate": 1 if shopify_order.get("taxes_included") else 0,
-			"cost_center": shopify_settings.cost_center
 		})
-
-	taxes = update_taxes_with_shipping_lines(taxes,
-		shopify_order.get("shipping_lines"), shopify_settings)
-
-	return taxes
-
-
-def update_taxes_with_shipping_lines(taxes, shipping_lines, shopify_settings):
-	"""Shipping lines represents the shipping details,
-		each such shipping detail consists of a list of tax_lines"""
-	for shipping_charge in shipping_lines:
-		if shipping_charge.get("price"):
-			taxes.append({
-				"charge_type": _("Actual"),
-				"account_head": get_tax_account_head("shipping"),
-				"description": shipping_charge["title"],
-				"tax_amount": shipping_charge["price"],
-				"cost_center": shopify_settings.cost_center
-			})
-
-		for tax in shipping_charge.get("tax_lines"):
-			taxes.append({
-				"charge_type": _("Actual"),
-				"account_head": get_tax_account_head("tax"),
-				"description": tax["title"],
-				"tax_amount": tax["price"],
-				"cost_center": shopify_settings.cost_center
-			})
 
 	return taxes
 
@@ -425,7 +410,7 @@ def get_tax_account_head(tax_type):
 
 def get_shopify_document(doctype, shopify_order_id):
 	"""
-	Get the linked document for a Shopify order ID.
+	Get a valid linked document for a Shopify order ID.
 
 	Args:
 		doctype (str): The doctype to retrieve
@@ -436,7 +421,8 @@ def get_shopify_document(doctype, shopify_order_id):
 			empty object if no document is found.
 	"""
 
-	name = frappe.db.get_value(doctype, {"shopify_order_id": shopify_order_id}, "name")
+	name = frappe.db.get_value(doctype,
+		{"docstatus": ["<", 2], "shopify_order_id": shopify_order_id}, "name")
 	if name:
 		return frappe.get_doc(doctype, name)
 	return frappe._dict()

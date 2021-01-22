@@ -1,9 +1,11 @@
+from collections import defaultdict
+
 from shopify import Order, PaginatedIterator, Payouts, Transactions
 
 import frappe
 from erpnext.erpnext_integrations.connectors.shopify_connection import (
 	create_shopify_delivery, create_shopify_invoice, create_shopify_order,
-	get_shopify_document)
+	get_shopify_document, get_tax_account_head)
 from erpnext.erpnext_integrations.doctype.shopify_log.shopify_log import make_shopify_log
 from frappe.utils import flt, getdate, now
 
@@ -52,8 +54,8 @@ def create_shopify_payouts():
 
 	for page in payouts:
 		for payout in page:
-			payout_exists = frappe.db.exists("Shopify Payout", {"payout_id": payout.id})
-			payout_docstatus = frappe.db.get_value("Shopify Payout", {"payout_id": payout.id}, "docstatus")
+			if frappe.db.exists("Shopify Payout", {"payout_id": payout.id}):
+				continue
 
 			payout_order_ids = []
 			try:
@@ -68,16 +70,8 @@ def create_shopify_payouts():
 				Transactions.clear_session()
 
 			create_missing_orders(session, payout_order_ids)
-
-			payout_doc = None
-			if not payout_exists:
-				create_or_update_shopify_payout(session, payout)
-			elif payout_docstatus == 0:
-				# skip payout generation if one is already submitted or cancelled,
-				# and update an existing draft payout if it exists
-				payout_name = frappe.db.get_value("Shopify Payout", {"payout_id": payout.id}, "name")
-				payout_doc = frappe.get_doc("Shopify Payout", payout_name)
-				create_or_update_shopify_payout(session, payout, payout_doc)
+			payout_doc = create_or_update_shopify_payout(session, payout)
+			update_invoice_fees(payout_doc)
 
 	shopify_settings.last_sync_datetime = now()
 	shopify_settings.save()
@@ -110,25 +104,48 @@ def create_missing_orders(session, shopify_order_ids):
 				create_shopify_delivery(order.to_dict(), sales_order)
 
 
-def create_or_update_shopify_payout(session, payout, payout_doc=None):
+def update_invoice_fees(payout_doc):
+	payouts_by_invoice = defaultdict(list)
+	for transaction in payout_doc.transactions:
+		if transaction.sales_invoice:
+			payouts_by_invoice[transaction.sales_invoice].append(transaction)
+
+	for invoice_id, order_transactions in payouts_by_invoice.items():
+		invoice = frappe.get_doc("Sales Invoice", invoice_id)
+		if invoice.docstatus != 0:
+			continue
+
+		for transaction in order_transactions:
+			if not transaction.fee:
+				continue
+
+			invoice.append("taxes", {
+				"charge_type": "Actual",
+				"account_head": get_tax_account_head("fee"),
+				"description": transaction.transaction_type,
+				"tax_amount": -flt(transaction.fee)
+			})
+
+		invoice.save()
+		invoice.submit()
+
+
+def create_or_update_shopify_payout(session, payout):
 	"""
 	Create a Payout document from Shopify's Payout information.
 	If a payout exists, update that instead.
 
 	Args:
-		session (Session): The active Shopify client session.
-		payout (Payout): The Payout payload from Shopify
-		payout_doc (ShopifyPayout, optional): The existing Shopify Payout ERPNext
-			document. Defaults to None.
+		session (shopify.Session): The active Shopify client session.
+		payout (shopify.Payout): The Payout payload from Shopify
 
 	Returns:
-		str: The document ID of the created / updated Shopify Payout
+		ShopifyPayout: The created Shopify Payout document
 	"""
 
-	if not payout_doc:
-		payout_doc = frappe.new_doc("Shopify Payout")
-
 	company = frappe.db.get_single_value("Shopify Settings", "company")
+
+	payout_doc = frappe.new_doc("Shopify Payout")
 	payout_doc.update({
 		"company": company,
 		"payout_id": payout.id,
@@ -187,4 +204,4 @@ def create_or_update_shopify_payout(session, payout, payout_doc=None):
 
 	payout_doc.save()
 	frappe.db.commit()
-	return payout_doc.name
+	return payout_doc

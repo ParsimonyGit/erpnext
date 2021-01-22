@@ -23,15 +23,13 @@ class ShopifyPayout(Document):
 		On submit of a Payout, do the following:
 
 			- If a Shopify Order is cancelled, update all linked documents in ERPNext
-			- Find a draft Sales Invoice against the Shopify order, update it with
-				new payment fees and charges, and submit the invoice
-			- If a Shopify Order has been fully returned, make a sales return in ERPNext
+			- If a Shopify Order has been fully or partially returned, make a
+				sales return in ERPNext
 			- Create a Journal Entry to balance all existing transactions
 				with additional fees and charges from Shopify, if any
 		"""
 
 		self.update_cancelled_shopify_orders()
-		self.update_shopify_payment_fees()
 		self.create_sales_returns()
 		self.create_payout_journal_entry()
 
@@ -79,31 +77,6 @@ class ShopifyPayout(Document):
 
 		Order.clear_session()
 
-	def update_shopify_payment_fees(self):
-		payouts_by_invoice = defaultdict(list)
-		for transaction in self.transactions:
-			if transaction.sales_invoice:
-				payouts_by_invoice[transaction.sales_invoice].append(transaction)
-
-		for invoice_id, order_transactions in payouts_by_invoice.items():
-			invoice = frappe.get_doc("Sales Invoice", invoice_id)
-			if invoice.docstatus != 0:
-				continue
-
-			for transaction in order_transactions:
-				if not transaction.fee:
-					continue
-
-				invoice.append("taxes", {
-					"charge_type": "Actual",
-					"account_head": get_tax_account_head("fee"),
-					"description": transaction.transaction_type,
-					"tax_amount": flt(transaction.fee)
-				})
-
-			invoice.save()
-			invoice.submit()
-
 	def create_sales_returns(self):
 		transactions = [transaction for transaction in self.transactions
 			if transaction.sales_invoice and transaction.source_order_id]
@@ -131,7 +104,10 @@ class ShopifyPayout(Document):
 		for transaction in self.transactions:
 			if transaction.transaction_type.lower() == "payout":
 				if transaction.total_amount:
-					entries.append(get_amount_entry(transaction))
+					account = get_tax_account_head("payout")
+					amount = flt(transaction.net_amount)
+					entry = get_accounting_entry(account=account, amount=amount)
+					entries.append(entry)
 
 		# get the list of transactions that need to be balanced
 		payouts_by_invoice = defaultdict(list)
@@ -140,22 +116,23 @@ class ShopifyPayout(Document):
 				payouts_by_invoice[transaction.sales_invoice].append(transaction)
 
 		# generate journal entries for each missing transaction
-		for invoice_id, order_transactions in payouts_by_invoice.items():
-			reference_type = "Sales Invoice"
-			reference_name = invoice_id
-			party_type = "Customer"
-			party_name = frappe.get_cached_value("Sales Invoice", invoice_id, "customer")
+		for invoice, order_transactions in payouts_by_invoice.items():
+			party_name = frappe.get_cached_value("Sales Invoice", invoice, "customer")
+			account = frappe.get_cached_value("Sales Invoice", invoice, "debit_to")
 
 			for transaction in order_transactions:
-				references = dict(
-					reference_type=reference_type,
-					reference_name=reference_name,
-					party_type=party_type,
-					party_name=party_name
-				)
+				if transaction.net_amount:
+					amount = flt(transaction.net_amount)
+					entry = get_accounting_entry(
+						account=account,
+						amount=amount,
+						reference_type="Sales Invoice",
+						reference_name=invoice,
+						party_type="Customer",
+						party_name=party_name
+					)
 
-				if transaction.total_amount:
-					entries.append(get_amount_entry(transaction, references))
+					entries.append(entry)
 
 		# only create a JE if any of the payout transactions has been invoiced;
 		# the first entry will always be the summary payout entry
@@ -165,44 +142,3 @@ class ShopifyPayout(Document):
 			journal_entry.set("accounts", entries)
 			journal_entry.save()
 			journal_entry.submit()
-
-
-def get_amount_entry(transaction, references=None):
-	"""
-	Get the Journal Entry accounting entry for a Shopify transaction.
-
-	Args:
-		transaction (ShopifyPayoutTransaction): The Shopify Payout transaction data.
-		references (dict, optional): The document references for the Shopify transaction.
-			Defaults to None.
-
-	Raises:
-		frappe.ValidationError: If a transaction's charge or tax type is not
-			mapped to an account head in Shopify Settings.
-
-	Returns:
-		frappe._dict: The Journal Entry accounting entry data.
-	"""
-
-	if not references:
-		references = {}
-
-	account = None
-	amount = flt(transaction.net_amount)
-
-	if transaction.transaction_type:
-		try:
-			account = get_tax_account_head("payout")
-		except frappe.ValidationError as e:
-			if references.get("reference_name"):
-				account = frappe.db.get_value(references.get(
-					"reference_type"), references.get("reference_name"), "debit_to")
-
-			if not account:
-				raise e
-
-	return get_accounting_entry(
-		account=account,
-		amount=amount,
-		**references
-	)
