@@ -11,6 +11,7 @@ from frappe import _
 from frappe.utils import cstr, nowdate
 from frappe.utils.data import fmt_money
 from frappe.utils.jinja import render_template
+from frappe.utils.nestedset import get_descendants_of
 from frappe.utils.pdf import get_pdf
 from frappe.utils.print_format import read_multi_pdf
 
@@ -31,8 +32,21 @@ def execute(filters=None):
 		return [], []
 
 	data = []
-	columns = get_columns()
-	data = frappe.db.sql("""
+	columns = get_columns(filters)
+
+	if filters.supplier_group:
+		data = get_supplier_irs_data(filters)
+	elif filters.customer_group:
+		data = get_customer_irs_data(filters)
+
+	return columns, data
+
+
+def get_supplier_irs_data(filters):
+	supplier_groups = [filters.supplier_group] + \
+		get_descendants_of("Supplier Group", filters.supplier_group)
+
+	return frappe.db.sql("""
 		SELECT
 			s.supplier_group as "supplier_group",
 			gl.party AS "supplier",
@@ -43,38 +57,90 @@ def execute(filters=None):
 				INNER JOIN `tabSupplier` s
 		WHERE
 			s.name = gl.party
-				AND s.irs_1099 = 1
+				AND s.supplier_group IN %(supplier_group)s
 				AND gl.fiscal_year = %(fiscal_year)s
 				AND gl.party_type = "Supplier"
+				AND gl.company = %(company)s
 		GROUP BY
 			gl.party
 		ORDER BY
 			gl.party DESC
 	""", {
 		"fiscal_year": filters.fiscal_year,
-		"supplier_group": filters.supplier_group,
+		"supplier_group": tuple(supplier_groups),
 		"company": filters.company
 	}, as_dict=True)
 
-	return columns, data
+
+def get_customer_irs_data(filters):
+	customer_groups = [filters.customer_group] + \
+		get_descendants_of("Customer Group", filters.customer_group)
+
+	return frappe.db.sql("""
+		SELECT
+			c.customer_group as "customer_group",
+			gl.party AS "customer",
+			c.tax_id as "tax_id",
+			SUM(gl.debit_in_account_currency) AS "payments"
+		FROM
+			`tabGL Entry` gl
+				INNER JOIN `tabCustomer` c
+		WHERE
+			c.name = gl.party
+				AND c.customer_group IN %(customer_group)s
+				AND gl.fiscal_year = %(fiscal_year)s
+				AND gl.party_type = "Customer"
+				AND gl.company = %(company)s
+		GROUP BY
+			gl.party
+		ORDER BY
+			gl.party DESC
+	""", {
+		"fiscal_year": filters.fiscal_year,
+		"customer_group": tuple(customer_groups),
+		"company": filters.company
+	}, as_dict=True)
 
 
-def get_columns():
-	return [
-		{
-			"fieldname": "supplier_group",
-			"label": _("Supplier Group"),
-			"fieldtype": "Link",
-			"options": "Supplier Group",
-			"width": 200
-		},
-		{
-			"fieldname": "supplier",
-			"label": _("Supplier"),
-			"fieldtype": "Link",
-			"options": "Supplier",
-			"width": 200
-		},
+def get_columns(filters):
+	columns = []
+
+	if filters.supplier_group:
+		columns = [
+			{
+				"fieldname": "supplier_group",
+				"label": _("Supplier Group"),
+				"fieldtype": "Link",
+				"options": "Supplier Group",
+				"width": 200
+			},
+			{
+				"fieldname": "supplier",
+				"label": _("Supplier"),
+				"fieldtype": "Link",
+				"options": "Supplier",
+				"width": 200
+			}
+		]
+	elif filters.customer_group:
+		columns = [
+			{
+				"fieldname": "customer_group",
+				"label": _("Customer Group"),
+				"fieldtype": "Link",
+				"options": "Customer Group",
+				"width": 200
+			},
+			{
+				"fieldname": "customer",
+				"label": _("Customer"),
+				"fieldtype": "Link",
+				"options": "Customer",
+				"width": 200
+			}
+		]
+
+	columns.extend([
 		{
 			"fieldname": "tax_id",
 			"label": _("Tax ID"),
@@ -87,7 +153,9 @@ def get_columns():
 			"fieldtype": "Currency",
 			"width": 120
 		}
-	]
+	])
+
+	return columns
 
 
 @frappe.whitelist()
