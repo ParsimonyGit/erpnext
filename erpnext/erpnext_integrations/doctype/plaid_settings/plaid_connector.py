@@ -101,3 +101,5 @@ class PlaidConnector():
 			return transactions
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), _("Plaid transactions sync error"))
+
+		return []
