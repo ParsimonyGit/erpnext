@@ -90,14 +90,21 @@ class PlaidConnector():
 			end_date=end_date
 		)
 		if account_id:
-			kwargs.update(dict(account_ids=[account_id]))
+			kwargs.update({"account_ids": [account_id]})
 
 		try:
 			response = self.client.Transactions.get(**kwargs)
+		except ItemError as e:
+			if e.code == "ITEM_LOGIN_REQUIRED":
+				self.get_link_token(update_mode=True)
+				response = self.client.Transactions.get(**kwargs)
+
+		try:
 			transactions = response["transactions"]
 			while len(transactions) < response["total_transactions"]:
 				response = self.client.Transactions.get(self.access_token, start_date=start_date, end_date=end_date, offset=len(transactions))
 				transactions.extend(response["transactions"])
-			return transactions
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), _("Plaid transactions sync error"))
+		else:
+			return transactions
