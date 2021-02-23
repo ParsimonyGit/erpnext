@@ -11,7 +11,6 @@ from frappe import _
 from frappe.utils import cstr, nowdate
 from frappe.utils.data import fmt_money
 from frappe.utils.jinja import render_template
-from frappe.utils.nestedset import get_descendants_of
 from frappe.utils.pdf import get_pdf
 from frappe.utils.print_format import read_multi_pdf
 
@@ -32,21 +31,12 @@ def execute(filters=None):
 		return [], []
 
 	data = []
-	columns = get_columns(filters)
-
+	columns = get_columns()
+	conditions = ""
 	if filters.supplier_group:
-		data = get_supplier_irs_data(filters)
-	elif filters.customer_group:
-		data = get_customer_irs_data(filters)
+		conditions += "AND s.supplier_group = %s" %frappe.db.escape(filters.get("supplier_group"))
 
-	return columns, data
-
-
-def get_supplier_irs_data(filters):
-	supplier_groups = [filters.supplier_group] + \
-		get_descendants_of("Supplier Group", filters.supplier_group)
-
-	return frappe.db.sql("""
+	data = frappe.db.sql("""
 		SELECT
 			s.supplier_group as "supplier_group",
 			gl.party AS "supplier",
@@ -57,19 +47,22 @@ def get_supplier_irs_data(filters):
 				INNER JOIN `tabSupplier` s
 		WHERE
 			s.name = gl.party
-				AND s.supplier_group IN %(supplier_group)s
+				AND s.irs_1099 = 1
 				AND gl.fiscal_year = %(fiscal_year)s
 				AND gl.party_type = "Supplier"
 				AND gl.company = %(company)s
+				{conditions}
+
 		GROUP BY
 			gl.party
+			
 		ORDER BY
-			gl.party DESC
-	""", {
-		"fiscal_year": filters.fiscal_year,
-		"supplier_group": tuple(supplier_groups),
-		"company": filters.company
-	}, as_dict=True)
+			gl.party DESC""".format(conditions=conditions), {
+				"fiscal_year": filters.fiscal_year,
+				"company": filters.company
+			}, as_dict=True)
+
+	return columns, data
 
 
 def get_customer_irs_data(filters):
@@ -145,13 +138,13 @@ def get_columns(filters):
 			"fieldname": "tax_id",
 			"label": _("Tax ID"),
 			"fieldtype": "Data",
-			"width": 120
+			"width": 200
 		},
 		{
 			"fieldname": "payments",
 			"label": _("Total Payments"),
 			"fieldtype": "Currency",
-			"width": 120
+			"width": 200
 		}
 	])
 
@@ -188,7 +181,8 @@ def irs_1099_print(filters):
 		row["payments"] = fmt_money(row["payments"], precision=0, currency="USD")
 		pdf = get_pdf(render_template(template, row), output=output if output else None)
 
-	frappe.local.response.filename = f"{filters.fiscal_year} {filters.company} IRS 1099 Forms{IRS_1099_FORMS_FILE_EXTENSION}"
+	frappe.local.response.filename = "{0} {1} IRS 1099 Forms{2}".format(filters.fiscal_year,
+		filters.company, IRS_1099_FORMS_FILE_EXTENSION)
 	frappe.local.response.filecontent = read_multi_pdf(output)
 	frappe.local.response.type = "download"
 
