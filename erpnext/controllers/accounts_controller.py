@@ -104,12 +104,12 @@ class AccountsController(TransactionBase):
 				self.validate_deferred_start_and_end_date()
 
 		validate_regional(self)
-		
+
 		validate_einvoice_fields(self)
 
 		if self.doctype != 'Material Request':
 			apply_pricing_rule_on_transaction(self)
-	
+
 	def before_cancel(self):
 		validate_einvoice_fields(self)
 
@@ -1232,6 +1232,38 @@ def validate_and_delete_children(parent, data):
 		d.cancel()
 		d.delete()
 
+
+@frappe.whitelist()
+def make_quality_inspections(doctype, docname, items):
+	items = json.loads(items).get('items')
+	inspections = []
+
+	for item in items:
+		if item.get("sample_size") > item.get("qty"):
+			frappe.throw(_("{item_name}'s Sample Size ({sample_size}) cannot be greater than the Accepted Quantity ({accepted_quantity})").format(
+				item_name=item.get("item_name"),
+				sample_size=item.get("sample_size"),
+				accepted_quantity=item.get("qty")
+			))
+
+		quality_inspection = frappe.get_doc({
+			"doctype": "Quality Inspection",
+			"inspection_type": "Incoming",
+			"inspected_by": frappe.session.user,
+			"reference_type": doctype,
+			"reference_name": docname,
+			"item_code": item.get("item_code"),
+			"description": item.get("description"),
+			"sample_size": item.get("sample_size"),
+			"item_serial_no": item.get("serial_no").split("\n")[0] if item.get("serial_no") else None,
+			"batch_no": item.get("batch_no")
+		}).insert()
+		quality_inspection.save()
+		inspections.append(quality_inspection)
+
+	return [get_link_to_form("Quality Inspection", inspection.name) for inspection in inspections]
+
+
 @frappe.whitelist()
 def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, child_docname="items"):
 	def check_doc_permissions(doc, perm_type='create'):
@@ -1266,7 +1298,7 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 			)
 
 	def get_new_child_item(item_row):
-		child_doctype = "Sales Order Item" if parent_doctype == "Sales Order" else "Purchase Order Item" 
+		child_doctype = "Sales Order Item" if parent_doctype == "Sales Order" else "Purchase Order Item"
 		return set_order_defaults(parent_doctype, parent_doctype_name, child_doctype, child_docname, item_row)
 
 	def validate_quantity(child_item, d):
@@ -1330,7 +1362,7 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 				child_item.conversion_factor = 1
 			else:
 				child_item.conversion_factor = flt(d.get('conversion_factor'), conv_fac_precision)
-		
+
 		if d.get("uom"):
 			child_item.uom = d.get("uom")
 			conversion_factor = flt(get_conversion_factor(child_item.item_code, child_item.uom).get("conversion_factor"))
