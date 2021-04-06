@@ -1930,9 +1930,13 @@ erpnext.TransactionController = erpnext.taxes_and_totals.extend({
 				cannot_add_rows: true,
 				in_place_edit: true,
 				data: data,
+<<<<<<< HEAD
 				get_data: () => {
 					return data;
 				},
+=======
+				get_data: () => { return data },
+>>>>>>> d87b9e392d... feat: create Quality Inspections from account and stock documents (#25)
 				fields: [
 					{
 						fieldtype: "Data",
