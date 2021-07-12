@@ -20,7 +20,7 @@
   "column_break_13",
   "billing_interval_count",
   "payment_plan_section",
-  "payment_plan_id",
+  "product_price_id",
   "column_break_16",
   "payment_gateway",
   "accounting_dimensions_section",
@@ -113,11 +113,6 @@
    "label": "Payment Plan"
   },
   {
-   "fieldname": "payment_plan_id",
-   "fieldtype": "Data",
-   "label": "Payment Plan"
-  },
-  {
    "fieldname": "column_break_16",
    "fieldtype": "Column Break"
   },
@@ -136,9 +131,14 @@
   {
    "fieldname": "dimension_col_break",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "product_price_id",
+   "fieldtype": "Data",
+   "label": "Product Price ID"
   }
  ],
- "modified": "2019-07-25 18:35:04.362556",
+ "modified": "2021-06-18 04:37:19.471221",
  "modified_by": "Administrator",
  "module": "Accounts",
  "name": "Subscription Plan",
