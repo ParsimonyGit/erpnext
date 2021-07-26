@@ -410,6 +410,8 @@ class JournalEntry(AccountsController):
 		for d in self.get("accounts"):
 			if d.account_currency == self.company_currency:
 				d.exchange_rate = 1
+			elif d.exchange_rate and d.exchange_rate != 1:
+				continue
 			elif not d.exchange_rate or d.exchange_rate == 1 or \
 				(d.reference_type in ("Sales Invoice", "Purchase Invoice")
 				and d.reference_name and self.posting_date):

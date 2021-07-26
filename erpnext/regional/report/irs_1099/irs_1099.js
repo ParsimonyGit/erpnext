@@ -30,6 +30,15 @@ frappe.query_reports["IRS 1099"] = {
 			"reqd": 0,
 			"width": 80
 		},
+		{
+			"fieldname": "customer_group",
+			"label": __("Customer Group"),
+			"fieldtype": "Link",
+			"options": "Customer Group",
+			"default": "",
+			"reqd": 0,
+			"width": 80
+		}
 	],
 
 	onload: function (query_report) {
