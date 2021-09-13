@@ -172,7 +172,7 @@ def build_forest(data):
 				if not parent_account_list and parent_account:
 					frappe.throw(_("The parent account {0} does not exists in the uploaded template").format(
 						frappe.bold(parent_account)))
-				return [child] + parent_account_list
+				return [child] + (parent_account_list or [])
 
 	charts_map = defaultdict(dict)
 	paths = []
