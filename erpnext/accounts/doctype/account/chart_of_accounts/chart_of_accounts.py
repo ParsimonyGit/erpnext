@@ -11,7 +11,6 @@ import frappe
 from frappe.utils import cstr
 from frappe.utils.nestedset import rebuild_tree
 
-
 COA_FIELD_KEYS = ["account_number", "account_type", "root_type",
 	"is_group", "tax_rate", "account_currency"]
 
@@ -88,11 +87,14 @@ def get_chart(chart_template, existing_company=None):
 		return get_account_tree_from_existing_company(existing_company)
 
 	elif chart_template == "Standard":
-		from erpnext.accounts.doctype.account.chart_of_accounts.verified import standard_chart_of_accounts
+		from erpnext.accounts.doctype.account.chart_of_accounts.verified import (
+			standard_chart_of_accounts,
+		)
 		return standard_chart_of_accounts.get()
 	elif chart_template == "Standard with Numbers":
-		from erpnext.accounts.doctype.account.chart_of_accounts.verified \
-			import standard_chart_of_accounts_with_account_number
+		from erpnext.accounts.doctype.account.chart_of_accounts.verified import (
+			standard_chart_of_accounts_with_account_number,
+		)
 		return standard_chart_of_accounts_with_account_number.get()
 	else:
 		folders = ("verified",)
