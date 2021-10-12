@@ -99,6 +99,8 @@ class PlaidConnector():
 				response = self.client.Transactions.get(self.access_token, start_date=start_date, end_date=end_date, offset=len(transactions))
 				transactions.extend(response["transactions"])
 			return transactions
+		except ItemError as e:
+			raise e
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), _("Plaid transactions sync error"))
 
