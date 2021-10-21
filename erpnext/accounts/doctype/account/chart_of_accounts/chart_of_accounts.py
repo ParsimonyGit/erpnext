@@ -15,7 +15,7 @@ COA_FIELD_KEYS = ["account_number", "account_type", "root_type",
 	"is_group", "tax_rate", "account_currency"]
 
 
-def create_charts(company, chart_template=None, existing_company=None, custom_chart=None):
+def create_charts(company, chart_template=None, existing_company=None, custom_chart=None, from_coa_importer=None):
 	chart = custom_chart or get_chart(chart_template, existing_company)
 	if not chart:
 		return
@@ -39,7 +39,7 @@ def create_charts(company, chart_template=None, existing_company=None, custom_ch
 
 			account = frappe.get_doc({
 				"doctype": "Account",
-				"account_name": account_name,
+				"account_name": child.get('account_name') if from_coa_importer else account_name,
 				"company": company,
 				"parent_account": parent,
 				"is_group": child.get("is_group"),
@@ -204,7 +204,7 @@ def validate_bank_account(coa, bank_account):
 	return (bank_account in accounts)
 
 @frappe.whitelist()
-def build_tree_from_json(chart_template, chart_data=None):
+def build_tree_from_json(chart_template, chart_data=None, from_coa_importer=False):
 	''' get chart template from its folder and parse the json to be rendered as tree '''
 	chart = chart_data or get_chart(chart_template)
 
@@ -220,6 +220,9 @@ def build_tree_from_json(chart_template, chart_data=None):
 			account = {}
 			if account_name in COA_FIELD_KEYS:
 				continue
+
+			if from_coa_importer:
+				account_name = child['account_name']
 
 			account['parent_account'] = parent
 			account['expandable'] = child.get("is_group")

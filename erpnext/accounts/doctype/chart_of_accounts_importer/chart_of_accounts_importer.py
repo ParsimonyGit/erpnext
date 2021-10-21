@@ -68,7 +68,7 @@ def import_coa(file_name, company):
 
 	frappe.local.flags.ignore_root_company_validation = True
 	forest = build_forest(data)
-	create_charts(company, custom_chart=forest)
+	create_charts(company, custom_chart=forest, from_coa_importer=True)
 
 	# trigger on_update for company to reset default accounts
 	set_default_accounts(company)
@@ -147,7 +147,7 @@ def get_coa(doctype, parent, is_root=False, file_name=None, for_validate=0):
 
 	if not for_validate:
 		forest = build_forest(data)
-		accounts = build_tree_from_json("", chart_data=forest) # returns a list of dict in a tree render-able form
+		accounts = build_tree_from_json("", chart_data=forest, from_coa_importer=True) # returns a list of dict in a tree render-able form
 
 		# filter out to show data for the selected node only
 		accounts = [d for d in accounts if d['parent_account']==parent]
@@ -213,10 +213,13 @@ def build_forest(data):
 		if not account_name:
 			error_messages.append("Row {0}: Please enter Account Name".format(line_no))
 
+		name = account_name
 		if account_number:
 			account_number = cstr(account_number).strip()
 			account_name = "{} - {}".format(account_number, account_name)
 
+		charts_map[account_name] = {}
+		charts_map[account_name]["account_name"] = name
 		charts_map[account_name]["is_group"] = cint(is_group)
 		if account_type:
 			charts_map[account_name]["account_type"] = account_type
