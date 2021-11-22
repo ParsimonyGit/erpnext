@@ -362,7 +362,7 @@ class PurchaseReceipt(BuyingController):
 						if self.is_return or flt(d.item_tax_amount):
 							loss_account = expenses_included_in_valuation
 						else:
-							loss_account = self.get_company_default("default_expense_account")
+							loss_account = self.get_company_default("default_expense_account", ignore_validation=True) or stock_rbnb
 
 						cost_center = d.cost_center or frappe.get_cached_value("Company", self.company, "cost_center")
 
@@ -803,7 +803,8 @@ def make_stock_entry(source_name,target_doc=None):
 			"doctype": "Stock Entry Detail",
 			"field_map": {
 				"warehouse": "s_warehouse",
-				"parent": "reference_purchase_receipt"
+				"parent": "reference_purchase_receipt",
+				"batch_no": "batch_no"
 			},
 		},
 	}, target_doc, set_missing_values)

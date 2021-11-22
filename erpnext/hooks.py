@@ -257,6 +257,7 @@ doc_events = {
 		"validate": "erpnext.regional.india.utils.validate_tax_category"
 	},
 	"Sales Invoice": {
+		"after_insert": "erpnext.regional.saudi_arabia.utils.create_qr_code",
 		"on_submit": [
 			"erpnext.regional.create_transaction_log",
 			"erpnext.regional.italy.utils.sales_invoice_on_submit",
@@ -266,7 +267,10 @@ doc_events = {
 			"erpnext.regional.italy.utils.sales_invoice_on_cancel",
 			"erpnext.erpnext_integrations.taxjar_integration.delete_transaction"
 		],
-		"on_trash": "erpnext.regional.check_deletion_permission",
+		"on_trash": [
+			"erpnext.regional.check_deletion_permission",
+			"erpnext.regional.saudi_arabia.utils.delete_qr_code_file"
+		],
 		"validate": [
 			"erpnext.regional.india.utils.validate_document_name",
 			"erpnext.regional.india.utils.update_taxable_values"
@@ -338,6 +342,7 @@ scheduler_events = {
 	"all": [
 		"erpnext.projects.doctype.project.project.project_status_update_reminder",
 		"erpnext.healthcare.doctype.patient_appointment.patient_appointment.send_appointment_reminder",
+		"erpnext.hr.doctype.interview.interview.send_interview_reminder",
 		"erpnext.crm.doctype.social_media_post.social_media_post.process_scheduled_social_media_posts"
 	],
 	"hourly": [
@@ -383,6 +388,7 @@ scheduler_events = {
 		"erpnext.buying.doctype.supplier_quotation.supplier_quotation.set_expired_status",
 		"erpnext.accounts.doctype.process_statement_of_accounts.process_statement_of_accounts.send_auto_email",
 		"erpnext.non_profit.doctype.membership.membership.set_expired_status"
+		"erpnext.hr.doctype.interview.interview.send_daily_feedback_reminder"
 	],
 	"daily_long": [
 		"erpnext.setup.doctype.email_digest.email_digest.send",

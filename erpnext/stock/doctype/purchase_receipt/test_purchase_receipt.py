@@ -17,9 +17,10 @@ from erpnext.stock.doctype.purchase_receipt.purchase_receipt import make_purchas
 from erpnext.stock.doctype.serial_no.serial_no import SerialNoDuplicateError, get_serial_nos
 from erpnext.stock.doctype.warehouse.test_warehouse import create_warehouse
 from erpnext.stock.stock_ledger import SerialNoExistsInFutureTransaction
+from erpnext.tests.utils import ERPNextTestCase
 
 
-class TestPurchaseReceipt(unittest.TestCase):
+class TestPurchaseReceipt(ERPNextTestCase):
 	def setUp(self):
 		frappe.db.set_value("Buying Settings", None, "allow_multiple_items", 1)
 
@@ -331,7 +332,21 @@ class TestPurchaseReceipt(unittest.TestCase):
 
 		pr1.submit()
 		self.assertRaises(frappe.ValidationError, pr2.submit)
-		frappe.db.rollback()
+
+		pr1.cancel()
+		se.cancel()
+		se1.cancel()
+		se2.cancel()
+		se3.cancel()
+		po.reload()
+		pr2.load_from_db()
+
+		if pr2.docstatus == 1 and frappe.db.get_value('Stock Ledger Entry',
+			{'voucher_no': pr2.name, 'is_cancelled': 0}, 'name'):
+			pr2.cancel()
+
+			po.load_from_db()
+			po.cancel()
 
 	def test_serial_no_supplier(self):
 		pr = make_purchase_receipt(item_code="_Test Serialized Item With Series", qty=1)
