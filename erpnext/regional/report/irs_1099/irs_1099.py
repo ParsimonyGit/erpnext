@@ -34,17 +34,19 @@ def execute(filters=None):
 	data = []
 	columns = get_columns(filters)
 
-	if filters.supplier_group:
-		data = get_supplier_irs_data(filters)
-	elif filters.customer_group:
+	if filters.customer_group:
 		data = get_customer_irs_data(filters)
+	else:
+		data = get_supplier_irs_data(filters)
 
 	return columns, data
 
 
 def get_supplier_irs_data(filters):
-	supplier_groups = [filters.supplier_group] + \
-		get_descendants_of("Supplier Group", filters.supplier_group)
+	base_supplier_group = filters.supplier_group or "All Supplier Groups"
+	supplier_groups = [base_supplier_group] + get_descendants_of(
+		"Supplier Group", base_supplier_group
+	)
 
 	return frappe.db.sql("""
 		SELECT
