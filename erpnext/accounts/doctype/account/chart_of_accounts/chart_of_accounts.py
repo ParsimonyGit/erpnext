@@ -11,7 +11,7 @@ import frappe
 from frappe.utils import cstr
 from frappe.utils.nestedset import rebuild_tree
 
-COA_FIELD_KEYS = ["account_number", "account_type", "root_type",
+COA_FIELD_KEYS = ["account_number", "account_name", "account_type", "root_type",
 	"is_group", "tax_rate", "account_currency"]
 
 
