@@ -1,4 +1,3 @@
-from __future__ import unicode_literals
 
 from frappe import _
 
@@ -273,6 +272,9 @@ doc_events = {
 			"erpnext.regional.india.utils.validate_document_name",
 			"erpnext.regional.india.utils.update_taxable_values"
 		]
+	},
+	"POS Invoice": {
+		"on_submit": ["erpnext.regional.saudi_arabia.utils.create_qr_code"]
 	},
 	"Purchase Invoice": {
 		"validate": [
