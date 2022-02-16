@@ -47,20 +47,7 @@ class BOM(WebsiteGenerator):
 		else:
 			idx = 1
 
-		prefix = self.doctype
-		suffix = "%.3i" % idx  # convert index to string (1 -> "001")
-		bom_name = f"{prefix}-{self.item}-{suffix}"
-
-		if len(bom_name) <= 140:
-			self.name = bom_name
-		else:
-			# since max characters for name is 140, remove enough characters from the
-			# item name to fit the prefix, suffix and the separators
-			truncated_length = 140 - (len(prefix) + len(suffix) + 2)
-			truncated_item_name = self.item[:truncated_length]
-			# if a partial word is found after truncate, remove the extra characters
-			truncated_item_name = truncated_item_name.rsplit(" ", 1)[0]
-			self.name = f"{prefix}-{truncated_item_name}-{suffix}"
+		self.name = 'BOM-' + self.item + ('-%.3i' % idx)
 
 	def validate(self):
 		self.route = frappe.scrub(self.name).replace('_', '-')
