@@ -2,6 +2,7 @@
 # License: GNU General Public License v3. See license.txt
 
 from __future__ import unicode_literals
+import re
 import frappe, erpnext
 from frappe.utils import cint, cstr, flt
 from frappe import _
@@ -29,26 +30,33 @@ class BOM(WebsiteGenerator):
 	)
 
 	def autoname(self):
-		names = frappe.db.sql_list("""select name from `tabBOM` where item=%s""", self.item)
+		existing_boms = frappe.get_all("BOM", filters={"item": self.item})
+		if existing_boms:
+			existing_bom_names = [bom.name for bom in existing_boms]
 
-		if names:
-			# name can be BOM/ITEM/001, BOM/ITEM/001-1, BOM-ITEM-001, BOM-ITEM-001-1
+			# split by "/" and "-"
+			delimiters = ["/", "-"]
+			pattern = "|".join(map(re.escape, delimiters))
+			bom_parts = [re.split(pattern, bom_name) for bom_name in existing_bom_names]
 
-			# split by item
-			names = [name.split(self.item, 1) for name in names]
-			names = [d[-1][1:] for d in filter(lambda x: len(x) > 1 and x[-1], names)]
+			# filter out BOMs that do not follow the following formats:
+			# - BOM/ITEM/001
+			# - BOM/ITEM/001-1
+			# - BOM-ITEM-001
+			# - BOM-ITEM-001-1
+			valid_bom_parts = list(filter(lambda x: len(x) > 1 and x[-1], bom_parts))
 
-			# split by (-) if cancelled
-			if names:
-				names = [cint(name.split('-')[-1]) for name in names]
-				idx = max(names) + 1
+			# extract the current index from the BOM parts
+			if valid_bom_parts:
+				indexes = [cint(part[-1]) for part in valid_bom_parts]
+				index = max(indexes) + 1
 			else:
-				idx = 1
+				index = 1
 		else:
-			idx = 1
+			index = 1
 
 		prefix = self.doctype
-		suffix = "%.3i" % idx  # convert index to string (1 -> "001")
+		suffix = "%.3i" % index  # convert index to string (1 -> "001")
 		bom_name = f"{prefix}-{self.item}-{suffix}"
 
 		if len(bom_name) <= 140:
