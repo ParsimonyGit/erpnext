@@ -33,25 +33,7 @@ class BOM(WebsiteGenerator):
 		existing_boms = frappe.get_all("BOM", filters={"item": self.item})
 		if existing_boms:
 			existing_bom_names = [bom.name for bom in existing_boms]
-
-			# split by "/" and "-"
-			delimiters = ["/", "-"]
-			pattern = "|".join(map(re.escape, delimiters))
-			bom_parts = [re.split(pattern, bom_name) for bom_name in existing_bom_names]
-
-			# filter out BOMs that do not follow the following formats:
-			# - BOM/ITEM/001
-			# - BOM/ITEM/001-1
-			# - BOM-ITEM-001
-			# - BOM-ITEM-001-1
-			valid_bom_parts = list(filter(lambda x: len(x) > 1 and x[-1], bom_parts))
-
-			# extract the current index from the BOM parts
-			if valid_bom_parts:
-				indexes = [cint(part[-1]) for part in valid_bom_parts]
-				index = max(indexes) + 1
-			else:
-				index = 1
+			index = self.get_next_version_index(existing_bom_names)
 		else:
 			index = 1
 
@@ -69,6 +51,30 @@ class BOM(WebsiteGenerator):
 			# if a partial word is found after truncate, remove the extra characters
 			truncated_item_name = truncated_item_name.rsplit(" ", 1)[0]
 			self.name = f"{prefix}-{truncated_item_name}-{suffix}"
+
+	@staticmethod
+	def get_next_version_index(existing_boms):
+		# split by "/" and "-"
+		delimiters = ["/", "-"]
+		pattern = "|".join(map(re.escape, delimiters))
+		bom_parts = [re.split(pattern, bom_name) for bom_name in existing_boms]
+
+		# filter out BOMs that do not follow the following formats:
+		# - BOM/ITEM/001
+		# - BOM/ITEM/001-1
+		# - BOM-ITEM-001
+		# - BOM-ITEM-001-1
+		valid_bom_parts = list(filter(lambda x: len(x) > 1 and x[-1], bom_parts))
+
+		# extract the current index from the BOM parts
+		if not valid_bom_parts:
+			# handle cancelled and submitted documents
+			indexes = [cint(part[2] for part in valid_bom_parts)]
+			index = max(indexes) + 1
+		else:
+			index = 1
+
+		return index
 
 	def validate(self):
 		self.route = frappe.scrub(self.name).replace('_', '-')
