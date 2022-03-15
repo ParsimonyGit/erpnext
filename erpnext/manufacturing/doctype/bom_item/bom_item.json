@@ -8,6 +8,7 @@
   "item_name",
   "operation",
   "column_break_3",
+  "do_not_explode",
   "bom_no",
   "source_warehouse",
   "allow_alternative_item",
@@ -67,6 +68,7 @@
    "fieldtype": "Column Break"
   },
   {
+   "depends_on": "eval:!doc.do_not_explode",
    "fieldname": "bom_no",
    "fieldtype": "Link",
    "in_filter": 1,
@@ -258,11 +260,17 @@
    "label": "Original Item",
    "options": "Item",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "do_not_explode",
+   "fieldtype": "Check",
+   "label": "Do Not Explode"
   }
  ],
  "idx": 1,
  "istable": 1,
- "modified": "2019-11-22 11:38:52.087303",
+ "modified": "2022-01-24 16:57:57.020232",
  "modified_by": "Administrator",
  "module": "Manufacturing",
  "name": "BOM Item",
