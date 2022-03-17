@@ -125,6 +125,10 @@ class BOM(WebsiteGenerator):
 		for item in self.get("items"):
 			self.validate_bom_currecny(item)
 
+			item.bom_no = ''
+			if not item.do_not_explode:
+				item.bom_no = item.bom_no
+
 			ret = self.get_bom_material_detail({
 				"company": self.company,
 				"item_code": item.item_code,
@@ -135,8 +139,10 @@ class BOM(WebsiteGenerator):
 				"qty": item.qty,
 				"uom": item.uom,
 				"stock_uom": item.stock_uom,
-				"conversion_factor": item.conversion_factor
+				"conversion_factor": item.conversion_factor,
+				"do_not_explode": item.do_not_explode
 			})
+
 			for r in ret:
 				if not item.get(r):
 					item.set(r, ret[r])
@@ -173,6 +179,9 @@ class BOM(WebsiteGenerator):
 			 'base_rate'	: flt(rate) * (flt(self.conversion_rate) or 1),
 			 'include_item_in_manufacturing': cint(args['transfer_for_manufacture']) or 0
 		}
+
+		if args.get('do_not_explode'):
+			ret_item['bom_no'] = ''
 
 		return ret_item
 

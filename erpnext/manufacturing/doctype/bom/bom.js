@@ -281,7 +281,8 @@ var get_bom_material_detail = function(doc, cdt, cdn, scrap_items) {
 				"include_item_in_manufacturing": d.include_item_in_manufacturing,
 				"uom": d.uom,
 				"stock_uom": d.stock_uom,
-				"conversion_factor": d.conversion_factor
+				"conversion_factor": d.conversion_factor,
+				"do_not_explode": d.do_not_explode
 			},
 			callback: function(r) {
 				d = locals[cdt][cdn];
@@ -447,6 +448,12 @@ frappe.ui.form.on("BOM Operation", "workstation", function(frm, cdt, cdn) {
 			erpnext.bom.calculate_total(frm.doc);
 		}
 	});
+});
+
+frappe.ui.form.on("BOM Item", {
+	do_not_explode: function(frm, cdt, cdn) {
+		get_bom_material_detail(frm.doc, cdt, cdn, false);
+	}
 });
 
 frappe.ui.form.on("BOM Item", "qty", function(frm, cdt, cdn) {
