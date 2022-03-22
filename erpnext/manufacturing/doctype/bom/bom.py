@@ -30,7 +30,10 @@ class BOM(WebsiteGenerator):
 	)
 
 	def autoname(self):
-		existing_boms = frappe.get_all("BOM", filters={"item": self.item})
+		existing_boms = frappe.get_all(
+			"BOM", filters={"docstatus": ["<", 2], "item": self.item}
+		)
+
 		if existing_boms:
 			existing_bom_names = [bom.name for bom in existing_boms]
 			index = self.get_next_version_index(existing_bom_names)
@@ -67,9 +70,9 @@ class BOM(WebsiteGenerator):
 		valid_bom_parts = list(filter(lambda x: len(x) > 1 and x[-1], bom_parts))
 
 		# extract the current index from the BOM parts
-		if not valid_bom_parts:
+		if valid_bom_parts:
 			# handle cancelled and submitted documents
-			indexes = [cint(part[2] for part in valid_bom_parts)]
+			indexes = [cint(part[-1] for part in valid_bom_parts)]
 			index = max(indexes) + 1
 		else:
 			index = 1
