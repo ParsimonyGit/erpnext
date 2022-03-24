@@ -3,8 +3,11 @@
     "name": "Canada - Plan comptable pour les provinces francophones", 
     "tree": {
         "Actif": {
+            "is_group": 1,
             "Actif \u00e0 court terme": {
+                "is_group": 1,
                 "Avances": {
+                    "is_group": 1,
                     "Avances aux actionnaires": {}, 
                     "Avances aux employ\u00e9s": {}, 
                     "Avances sur commissions": {}
@@ -14,6 +17,7 @@
                     "is_group": 1
                 }, 
                 "Comptes \u00e0 recevoir": {
+                    "is_group": 1,
                     "Comptes clients": {
                         "account_type": "Receivable"
                     }, 
@@ -23,6 +27,7 @@
                     "is_group": 1
                 }, 
                 "Frais pay\u00e9s d\u2019avance": {
+                    "is_group": 1,
                     "Assurances pay\u00e9s d'avance": {}, 
                     "Publicit\u00e9 pay\u00e9 d'avance": {}, 
                     "Taxes pay\u00e9s d'avance": {}
@@ -32,6 +37,7 @@
                     "is_group": 1
                 }, 
                 "Stocks": {
+                    "is_group": 1,
                     "Mati\u00e8res premi\u00e8res": {}, 
                     "Stock de produits fini": {}, 
                     "Stock exp\u00e9di\u00e9 non-factur\u00e9": {}, 
@@ -41,8 +47,10 @@
                 "Subventions \u00e0 recevoir": {}, 
                 "TR\u00c9SORERIE OU \u00c9QUIVALENTS DE TR\u00c9SORERIE": {}, 
                 "Taxes \u00e0 recevoir": {
+                    "is_group": 1,
                     "TPS \u00e0 recevoir": {}, 
                     "TVH \u00e0 recevoir": {
+                        "is_group": 1,
                         "TVH \u00e0 recevoir - 13%": {}, 
                         "TVH \u00e0 recevoir - 14%": {}, 
                         "TVH \u00e0 recevoir - 15%": {}
@@ -51,12 +59,14 @@
                 }
             }, 
             "Autres actifs": {
+                "is_group": 1,
                 " Frais de premier \u00e9tablissement": {}, 
                 "Achalandage": {}, 
                 "Brevets, droits": {}, 
                 "Frais de recherche et de d\u00e9veloppement - actif": {}
             }, 
             "Immobilisations": {
+                "is_group": 1,
                 " Amortissement accumul\u00e9 - b\u00e2timent": {}, 
                 " Amortissement accumul\u00e9 - entrep\u00f4t": {}, 
                 " Amortissement accumul\u00e9 - logiciels": {}, 
@@ -99,12 +109,14 @@
                 }
             }, 
             "Placements": {
+                "is_group": 1,
                 "D\u00e9p\u00f4ts": {}, 
                 "Placement": {}
             }, 
             "root_type": "Asset"
         }, 
         "Avoir des actionnaires": {
+            "is_group": 1,
             " B\u00e9n\u00e9fice de la p\u00e9riode": {}, 
             "Bonis": {}, 
             "B\u00e9n\u00e9fices non r\u00e9partis": {}, 
@@ -115,8 +127,11 @@
             "root_type": "Equity"
         }, 
         "Charges": {
+            "is_group": 1,
             "Charges d'exploitation": {
+                "is_group": 1,
                 "Salaires et charges sociales": {
+                    "is_group": 1,
                     "Assurance - emploi": {
                         "account_type": "Chargeable"
                     }, 
@@ -135,9 +150,12 @@
                 }
             }, 
             "Frais fixes": {
+                "is_group": 1,
                 "Frais de fabrication": {
+                    "is_group": 1,
                     " R\u00e9parations et entretien - moules et matrices": {}, 
                     "Ammortissements": {
+                        "is_group": 1,
                         "Amortissements - am\u00e9liorations locatives": {
                             "account_type": "Depreciation"
                         }, 
@@ -162,6 +180,7 @@
                         "account_type": "Depreciation"
                     }, 
                     "Assurances": {
+                        "is_group": 1,
                         " Assurances - feu": {}, 
                         " Assurances - responsabilit\u00e9": {}, 
                         " Assurances - vol": {}
@@ -185,6 +204,7 @@
                     "\u00c9nergie": {}
                 }, 
                 "Frais de formation": {
+                    "is_group": 1,
                     " Salaires - administration - frais fixe formation": {}, 
                     "Avantages sociaux - frais fixe formation": {}, 
                     "Cr\u00e9dits d\u2019imp\u00f4ts \u00e0 la formation": {}, 
@@ -195,13 +215,16 @@
                     "Salaires - vente": {}
                 }, 
                 "Frais de non-qualit\u00e9": {
+                    "is_group": 1,
                     " Avantages sociaux - non-qualit\u00e9": {}, 
                     " Main-d\u2019\u0153uvre directe - non-qualit\u00e9": {
+                        "is_group": 1,
                         "Main-d\u2019\u0153uvre directe - gaspillage": {}, 
                         "Main-d\u2019\u0153uvre directe - r\u00e9parations de garantie": {}, 
                         "Main-d\u2019\u0153uvre directe - travail a reprendre": {}
                     }, 
                     "Mat\u00e9riel - non-qualit\u00e9": {
+                        "is_group": 1,
                         "Mat\u00e9riel - gaspillage": {}, 
                         "Mat\u00e9riel - r\u00e9parations de garantie": {}, 
                         "Mat\u00e9riel - travail a reprendre": {}
@@ -209,6 +232,7 @@
                     "Salaire - inspecteur (contr\u00f4le de la qualit\u00e9)": {}
                 }, 
                 "Frais de recherche et de d\u00e9veloppement - charge": {
+                    "is_group": 1,
                     " Mati\u00e8res premi\u00e8res - R&D": {}, 
                     "Avantages sociaux - R&D": {}, 
                     "Cr\u00e9dits d\u2019imp\u00f4ts - R&D": {}, 
@@ -217,6 +241,7 @@
                     "Sous-traitance - R&D": {}
                 }, 
                 "Frais financiers": {
+                    "is_group": 1,
                     " Escomptes de caisse sur achats": {}, 
                     " Int\u00e9r\u00eats et frais de banque": {}, 
                     " Int\u00e9r\u00eats sur emprunts - actionnaires": {}, 
@@ -226,10 +251,12 @@
                     "Int\u00e9r\u00eats sur hypoth\u00e8que": {}
                 }, 
                 "Frais fixe de vente": {
+                    "is_group": 1,
                     " Frais de voyages - camionneurs": {}, 
                     " Frais de voyages - service apr\u00e8s-vente": {}, 
                     "Amortissement - camions": {}, 
                     "Amortissements - frais fixe de vente": {
+                        "is_group": 1,
                         " Amortissements - autos": {}, 
                         " Amortissements - bureau de vente": {}
                     }, 
@@ -249,6 +276,7 @@
                     "Publicit\u00e9": {}, 
                     "Salaires - camionneurs": {}, 
                     "Salaires - frais fixe de vente": {
+                        "is_group": 1,
                         "Salaires - exp\u00e9diteurs": {}, 
                         "Salaires - g\u00e9rants": {}, 
                         "Salaires - service apr\u00e8s-vente": {}, 
@@ -256,8 +284,10 @@
                     }
                 }, 
                 "Frais fixe d\u2019administration": {
+                    "is_group": 1,
                     " Assurances d\u2019autos - administration": {}, 
                     "Amortissements - frais fixe d'administration": {
+                        "is_group": 1,
                         "Amortissements - autos - frais fixe d'administration": {}, 
                         "Amortissements - logiciels": {}, 
                         "Amortissements - mobilier de bureau": {}, 
@@ -275,6 +305,7 @@
                     "Mauvaises cr\u00e9ances": {}, 
                     "Papeterie et d\u00e9penses de bureau": {}, 
                     "Salaires - frais fixe d'administration": {
+                        "is_group": 1,
                         "Salaires - administration": {}, 
                         "Salaires - bureau": {}
                     }, 
@@ -285,7 +316,9 @@
                 }
             }, 
             "Frais variables": {
+                "is_group": 1,
                 "Frais variables de fabrication": {
+                    "is_group": 1,
                     " Emballage \u00e0 la production": {
                         "account_type": "Cost of Goods Sold"
                     }, 
@@ -313,6 +346,7 @@
                     "account_type": "Cost of Goods Sold"
                 }, 
                 "Frais variables de vente": {
+                    "is_group": 1,
                     "Commissions": {}, 
                     "Redevances": {}, 
                     "Transport (\u00e0 contrat)": {}
@@ -321,17 +355,21 @@
             "root_type": "Expense"
         }, 
         "Passif": {
+            "is_group": 1,
             "PASSIFS NON-COURANTS": {
+                "is_group": 1,
                 "AUTRES PASSIFS NON-COURANTS": {}, 
                 "DETTES FINANCI\u00c8RES NON-COURANTES": {}, 
                 "IMP\u00d4TS DIFF\u00c9R\u00c9S": {}, 
                 "PROVISIONS POUR RETRAITES ET AUTRES AVANTAGES POST\u00c9RIEURS \u00c0 L'EMPLOI": {}
             }, 
             "Passif \u00e0 court terme": {
+                "is_group": 1,
                 " Commissions \u00e0 payer": {}, 
                 "Assurance collective \u00e0 payer": {}, 
                 "Autres comptes cr\u00e9diteurs": {}, 
                 "Comptes \u00e0 payer": {
+                    "is_group": 1,
                     "Comptes fournisseurs": {
                         "account_type": "Payable"
                     }
@@ -339,23 +377,29 @@
                 "D\u00e9p\u00f4ts de clients": {}, 
                 "Emprunt de banque": {}, 
                 "Imp\u00f4ts li\u00e9s aux salaires \u00e0 payer": {
+                    "is_group": 1,
                     "Agence du revenu du Canada": {
+                        "is_group": 1,
                         "Assurance - emploi \u00e0 payer": {
+                            "is_group": 1,
                             "AE - Contribution de l'employeur": {}, 
                             "AE - Contribution des employ\u00e9s": {}
                         }, 
                         "Imp\u00f4t f\u00e9d\u00e9ral sur salaires \u00e0 payer": {}
                     }, 
                     "Agence du revenu du Qu\u00e9bec": {
+                        "is_group": 1,
                         "Fond des Services de Sant\u00e9 \u00e0 payer": {}, 
                         "Imp\u00f4t provincial sur salaires \u00e0 payer": {}, 
                         "Normes du Travail \u00e0 payer": {}, 
                         "Provision pour sant\u00e9 et s\u00e9curit\u00e9 du travail CSST": {}, 
                         "R\u00e9gime des rentes du Qu\u00e9bec \u00e0 payer": {
+                            "is_group": 1,
                             "Rentes - Contribution de l'employeur": {}, 
                             "Rentes - Contribution des employ\u00e9s": {}
                         }, 
                         "R\u00e9gime qu\u00e9becois d'assurance parentale": {
+                            "is_group": 1,
                             "AP - Contribution de l'employeur": {}, 
                             "AP - Contribution des employ\u00e9s": {}
                         }
@@ -363,10 +407,12 @@
                     "Caisse de retraite \u00e0 payer": {}
                 }, 
                 "Imp\u00f4ts \u00e0 payer": {
+                    "is_group": 1,
                     "Imp\u00f4t f\u00e9d\u00e9ral sur le revenu \u00e0 payer": {}, 
                     "Imp\u00f4t provincial sur le revenu \u00e0 payer": {}, 
                     "TPS \u00e0 payer": {}, 
                     "TVH \u00e0 payer": {
+                        "is_group": 1,
                         "TVH \u00e0 payer - 13%": {}, 
                         "TVH \u00e0 payer - 14%": {}, 
                         "TVH \u00e0 payer - 15%": {}
@@ -374,6 +420,7 @@
                     "TVP/TVQ \u00e0 payer": {}
                 }, 
                 "Passifs de stock": {
+                    "is_group": 1,
                     "Stock re\u00e7u non factur\u00e9": {
                         "account_type": "Stock Received But Not Billed"
                     }
@@ -383,6 +430,7 @@
                 "Salaires \u00e0 payer": {}
             }, 
             "Passif \u00e0 long terme": {
+                "is_group": 1,
                 "Avances des actionnaires": {}, 
                 "Cr\u00e9dits d\u2019imp\u00f4ts report\u00e9s": {}, 
                 "Hypoth\u00e8que \u00e0 payer": {}, 
@@ -394,7 +442,9 @@
             "root_type": "Liability"
         }, 
         "Produits": {
+            "is_group": 1,
             "Revenus de ventes": {
+                "is_group": 1,
                 " Escomptes de volume sur ventes": {}, 
                 "Autres produits d'exploitation": {}, 
                 "Ventes": {}, 
@@ -403,6 +453,7 @@
                 "Ventes \u00e0 l'\u00e9tranger": {}
             }, 
             "Revenus non li\u00e9 \u00e0 la vente": {
+                "is_group": 1,
                 "Autres revenus non li\u00e9s \u00e0 la vente": {}, 
                 "Revenues d'int\u00e9r\u00eats": {}
             }, 
