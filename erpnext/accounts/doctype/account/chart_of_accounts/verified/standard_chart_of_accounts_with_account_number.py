@@ -8,8 +8,11 @@ from frappe import _
 def get():
     return {
         _("Application of Funds (Assets)"): {
+            "is_group": 1,
             _("Current Assets"): {
+                "is_group": 1,
                 _("Accounts Receivable"): {
+                    "is_group": 1,
                     _("Debtors"): {
                         "account_type": "Receivable",
                         "account_number": "1310"
@@ -22,6 +25,7 @@ def get():
                     "account_number": "1200"
                 },
                 _("Cash In Hand"): {
+                    "is_group": 1,
                     _("Cash"): {
                         "account_type": "Cash",
                         "account_number": "1110"
@@ -30,18 +34,21 @@ def get():
                     "account_number": "1100"
                 },
                 _("Loans and Advances (Assets)"): {
+                    "is_group": 1,
                     _("Employee Advances"): {
                         "account_number": "1610"
                     },
                     "account_number": "1600"
                 },
                 _("Securities and Deposits"): {
+                    "is_group": 1,
                     _("Earnest Money"): {
                         "account_number": "1651"
                     },
                     "account_number": "1650"
                 },
                 _("Stock Assets"): {
+                    "is_group": 1,
                     _("Stock In Hand"): {
                         "account_type": "Stock",
                         "account_number": "1410"
@@ -56,6 +63,7 @@ def get():
                 "account_number": "1100-1600"
             },
             _("Fixed Assets"): {
+                "is_group": 1,
                 _("Capital Equipments"): {
                     "account_type": "Fixed Asset",
                     "account_number": "1710"
@@ -99,6 +107,7 @@ def get():
                 "account_number": "1800"
             },
             _("Temporary Accounts"): {
+                "is_group": 1,
                 _("Temporary Opening"): {
                     "account_type": "Temporary",
                     "account_number": "1910"
@@ -109,8 +118,11 @@ def get():
             "account_number": "1000"
         },
         _("Expenses"): {
+            "is_group": 1,
             _("Direct Expenses"): {
+                "is_group": 1,
                 _("Stock Expenses"): {
+                    "is_group": 1,
                     _("Cost of Goods Sold"): {
                         "account_type": "Cost of Goods Sold",
                         "account_number": "5111"
@@ -132,6 +144,7 @@ def get():
                 "account_number": "5100"
             },
             _("Indirect Expenses"): {
+                "is_group": 1,
                 _("Administrative Expenses"): {
                     "account_number": "5201"
                 },
@@ -206,7 +219,9 @@ def get():
             "account_number": "5000"
         },
         _("Income"): {
+            "is_group": 1,
             _("Direct Income"): {
+                "is_group": 1,
                 _("Sales"): {
                     "account_number": "4110"
                 },
@@ -223,8 +238,11 @@ def get():
             "account_number": "4000"
         },
         _("Source of Funds (Liabilities)"): {
+            "is_group": 1,
             _("Current Liabilities"): {
+                "is_group": 1,
                 _("Accounts Payable"): {
+                    "is_group": 1,
                     _("Creditors"): {
                         "account_type": "Payable",
                         "account_number": "2110"
@@ -235,6 +253,7 @@ def get():
                     "account_number": "2100"
                 },
                 _("Stock Liabilities"): {
+                    "is_group": 1,
                     _("Stock Received But Not Billed"): {
                         "account_type": "Stock Received But Not Billed",
                         "account_number": "2210"
@@ -246,6 +265,7 @@ def get():
                     "account_number": "2200"
                 },
                 _("Duties and Taxes"): {
+                    "is_group": 1,
                     _("TDS Payable"): {
                         "account_number": "2310"
                     },
@@ -254,6 +274,7 @@ def get():
                     "account_number": "2300"
                 },
                 _("Loans (Liabilities)"): {
+                    "is_group": 1,
                     _("Secured Loans"): {
                         "account_number": "2410"
                     },
@@ -271,6 +292,7 @@ def get():
             "account_number": "2000"
         },
         _("Equity"): {
+            "is_group": 1,
             _("Capital Stock"): {
                 "account_type": "Equity",
                 "account_number": "3100"
