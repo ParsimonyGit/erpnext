@@ -326,6 +326,7 @@
                         "Waren": {}
                     },
                     "geleistete Anzahlungen": {
+                        "is_group": 1,
                         "Geleistete Anzahlungen 15% Vorsteuer": {},
                         "Geleistete Anzahlungen 16% Vorsteuer": {},
                         "Geleistete Anzahlungen 19% Vorsteuer": {},
