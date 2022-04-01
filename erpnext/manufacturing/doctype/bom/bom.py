@@ -2,6 +2,7 @@
 # License: GNU General Public License v3. See license.txt
 
 from __future__ import unicode_literals
+import re
 import frappe, erpnext
 from frappe.utils import cint, cstr, flt
 from frappe import _
@@ -29,25 +30,54 @@ class BOM(WebsiteGenerator):
 	)
 
 	def autoname(self):
-		names = frappe.db.sql_list("""select name from `tabBOM` where item=%s""", self.item)
+		existing_boms = frappe.get_all(
+			"BOM", filters={"docstatus": ["<", 2], "item": self.item}
+		)
 
-		if names:
-			# name can be BOM/ITEM/001, BOM/ITEM/001-1, BOM-ITEM-001, BOM-ITEM-001-1
-
-			# split by item
-			names = [name.split(self.item, 1) for name in names]
-			names = [d[-1][1:] for d in filter(lambda x: len(x) > 1 and x[-1], names)]
-
-			# split by (-) if cancelled
-			if names:
-				names = [cint(name.split('-')[-1]) for name in names]
-				idx = max(names) + 1
-			else:
-				idx = 1
+		if existing_boms:
+			existing_bom_names = [bom.name for bom in existing_boms]
+			index = self.get_next_version_index(existing_bom_names)
 		else:
-			idx = 1
+			index = 1
 
-		self.name = 'BOM-' + self.item + ('-%.3i' % idx)
+		prefix = self.doctype
+		suffix = "%.3i" % index  # convert index to string (1 -> "001")
+		bom_name = f"{prefix}-{self.item}-{suffix}"
+
+		if len(bom_name) <= 140:
+			self.name = bom_name
+		else:
+			# since max characters for name is 140, remove enough characters from the
+			# item name to fit the prefix, suffix and the separators
+			truncated_length = 140 - (len(prefix) + len(suffix) + 2)
+			truncated_item_name = self.item[:truncated_length]
+			# if a partial word is found after truncate, remove the extra characters
+			truncated_item_name = truncated_item_name.rsplit(" ", 1)[0]
+			self.name = f"{prefix}-{truncated_item_name}-{suffix}"
+
+	@staticmethod
+	def get_next_version_index(existing_boms):
+		# split by "/" and "-"
+		delimiters = ["/", "-"]
+		pattern = "|".join(map(re.escape, delimiters))
+		bom_parts = [re.split(pattern, bom_name) for bom_name in existing_boms]
+
+		# filter out BOMs that do not follow the following formats:
+		# - BOM/ITEM/001
+		# - BOM/ITEM/001-1
+		# - BOM-ITEM-001
+		# - BOM-ITEM-001-1
+		valid_bom_parts = list(filter(lambda x: len(x) > 1 and x[-1], bom_parts))
+
+		# extract the current index from the BOM parts
+		if valid_bom_parts:
+			# handle cancelled and submitted documents
+			indexes = [cint(part[-1] for part in valid_bom_parts)]
+			index = max(indexes) + 1
+		else:
+			index = 1
+
+		return index
 
 	def validate(self):
 		self.route = frappe.scrub(self.name).replace('_', '-')
