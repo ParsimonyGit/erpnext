@@ -15,7 +15,9 @@ COA_FIELD_KEYS = ["account_number", "account_name", "account_type", "root_type",
 	"is_group", "tax_rate", "account_currency"]
 
 
-def create_charts(company, chart_template=None, existing_company=None, custom_chart=None, from_coa_importer=None):
+def create_charts(
+	company, chart_template=None, existing_company=None, custom_chart=None, from_coa_importer=None
+):
 	chart = custom_chart or get_chart(chart_template, existing_company)
 	if not chart:
 		return
@@ -34,8 +36,9 @@ def create_charts(company, chart_template=None, existing_company=None, custom_ch
 			account_name, account_name_in_db = add_suffix_if_duplicate(account_name,
 				account_number, accounts)
 
-			report_type = "Balance Sheet" if root_type in ["Asset", "Liability", "Equity"] \
-				else "Profit and Loss"
+			report_type = (
+				"Balance Sheet" if root_type in ["Asset", "Liability", "Equity"] else "Profit and Loss"
+			)
 
 			account = frappe.get_doc({
 				"doctype": "Account",
@@ -69,8 +72,7 @@ def create_charts(company, chart_template=None, existing_company=None, custom_ch
 
 def add_suffix_if_duplicate(account_name, account_number, accounts):
 	if account_number:
-		account_name_in_db = unidecode(" - ".join([account_number,
-			account_name.strip().lower()]))
+		account_name_in_db = unidecode(" - ".join([account_number, account_name.strip().lower()]))
 	else:
 		account_name_in_db = unidecode(account_name.strip().lower())
 
@@ -90,11 +92,13 @@ def get_chart(chart_template, existing_company=None):
 		from erpnext.accounts.doctype.account.chart_of_accounts.verified import (
 			standard_chart_of_accounts,
 		)
+
 		return standard_chart_of_accounts.get()
 	elif chart_template == "Standard with Numbers":
 		from erpnext.accounts.doctype.account.chart_of_accounts.verified import (
 			standard_chart_of_accounts_with_account_number,
 		)
+
 		return standard_chart_of_accounts_with_account_number.get()
 	else:
 		folders = ("verified",)
@@ -110,6 +114,7 @@ def get_chart(chart_template, existing_company=None):
 						if chart and json.loads(chart).get("name") == chart_template:
 							return json.loads(chart).get("tree")
 
+
 @frappe.whitelist()
 def get_charts_for_country(country, with_standard=False):
 	charts = []
@@ -117,9 +122,10 @@ def get_charts_for_country(country, with_standard=False):
 	def _get_chart_name(content):
 		if content:
 			content = json.loads(content)
-			if (content and content.get("disabled", "No") == "No") \
-				or frappe.local.flags.allow_unverified_charts:
-					charts.append(content["name"])
+			if (
+				content and content.get("disabled", "No") == "No"
+			) or frappe.local.flags.allow_unverified_charts:
+				charts.append(content["name"])
 
 	country_code = frappe.db.get_value("Country", country, "code")
 	if country_code:
@@ -148,7 +154,12 @@ def get_charts_for_country(country, with_standard=False):
 def get_account_tree_from_existing_company(existing_company):
 	fields = COA_FIELD_KEYS.copy()
 	fields.extend(["name", "account_name", "parent_account"])
-	all_accounts = frappe.get_all('Account', filters={'company': existing_company}, fields=fields, order_by="lft, rgt")
+	all_accounts = frappe.get_all(
+		"Account",
+		filters={"company": existing_company},
+		fields=fields,
+		order_by="lft, rgt"
+	)
 
 	# fill in tree starting with root accounts (those with no parent)
 	account_tree = {}
@@ -187,12 +198,14 @@ def build_account_tree(tree, parent, all_accounts):
 		# call recursively to build a subtree for current account
 		build_account_tree(tree[child.account_name], child, all_accounts)
 
+
 @frappe.whitelist()
 def validate_bank_account(coa, bank_account):
 	accounts = []
 	chart = get_chart(coa)
 
 	if chart:
+
 		def _get_account_names(account_master):
 			for account_name, child in iteritems(account_master):
 				if account_name not in COA_FIELD_KEYS:
@@ -201,11 +214,12 @@ def validate_bank_account(coa, bank_account):
 
 		_get_account_names(chart)
 
-	return (bank_account in accounts)
+	return bank_account in accounts
+
 
 @frappe.whitelist()
 def build_tree_from_json(chart_template, chart_data=None, from_coa_importer=False):
-	''' get chart template from its folder and parse the json to be rendered as tree '''
+	"""get chart template from its folder and parse the json to be rendered as tree"""
 	chart = chart_data or get_chart(chart_template)
 
 	# if no template selected, return as it is
@@ -215,7 +229,7 @@ def build_tree_from_json(chart_template, chart_data=None, from_coa_importer=Fals
 	accounts = []
 
 	def _import_accounts(children, parent):
-		''' recursively called to form a parent-child based list of dict from chart template '''
+		"""recursively called to form a parent-child based list of dict from chart template"""
 		for account_name, child in iteritems(children):
 			account = {}
 			if account_name in COA_FIELD_KEYS:
@@ -226,10 +240,13 @@ def build_tree_from_json(chart_template, chart_data=None, from_coa_importer=Fals
 
 			account['parent_account'] = parent
 			account['expandable'] = child.get("is_group")
-			account['value'] = (cstr(child.get('account_number')).strip() + ' - ' + account_name) \
-				if child.get('account_number') else account_name
+			account["value"] = (
+				(cstr(child.get("account_number")).strip() + " - " + account_name)
+				if child.get("account_number")
+				else account_name
+			)
 			accounts.append(account)
-			_import_accounts(child, account['value'])
+			_import_accounts(child, account["value"])
 
 	_import_accounts(chart, None)
 	return accounts
