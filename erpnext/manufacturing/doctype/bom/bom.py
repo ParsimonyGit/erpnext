@@ -72,7 +72,7 @@ class BOM(WebsiteGenerator):
 		# extract the current index from the BOM parts
 		if valid_bom_parts:
 			# handle cancelled and submitted documents
-			indexes = [cint(part[-1] for part in valid_bom_parts)]
+			indexes = [cint(part[-1]) for part in valid_bom_parts]
 			index = max(indexes) + 1
 		else:
 			index = 1
