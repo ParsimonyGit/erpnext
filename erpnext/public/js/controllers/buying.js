@@ -81,7 +81,18 @@ erpnext.buying.BuyingController = erpnext.TransactionController.extend({
 		}
 
 		this.frm.set_query("item_code", "items", function() {
-			return me.get_item_query(me.frm.doc);
+			if (me.frm.doc.is_subcontracted == "Yes") {
+				return{
+					query: "erpnext.controllers.queries.item_query",
+					filters:{ 'supplier': me.frm.doc.supplier, 'is_sub_contracted_item': 1 }
+				}
+			}
+			else {
+				return{
+					query: "erpnext.controllers.queries.item_query",
+					filters: { 'supplier': me.frm.doc.supplier, 'is_purchase_item': 1, 'has_variants': 0}
+				}
+			}
 		});
 
 		this.frm.set_query("manufacturer", "items", function(doc, cdt, cdn) {
