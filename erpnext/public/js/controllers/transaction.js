@@ -572,7 +572,6 @@ erpnext.TransactionController = erpnext.taxes_and_totals.extend({
 							is_pos: cint(me.frm.doc.is_pos),
 							is_return: cint(me.frm.doc.is_return),
 							is_subcontracted: me.frm.doc.is_subcontracted,
-							transaction_date: me.frm.doc.transaction_date || me.frm.doc.posting_date,
 							ignore_pricing_rule: me.frm.doc.ignore_pricing_rule,
 							doctype: me.frm.doc.doctype,
 							name: me.frm.doc.name,
@@ -1055,7 +1054,11 @@ erpnext.TransactionController = erpnext.taxes_and_totals.extend({
 		} else {
 			// company currency and doc currency is same
 			// this will prevent unnecessary conversion rate triggers
-			this.frm.set_value("conversion_rate", 1.0);
+			if(this.frm.doc.currency === this.get_company_currency()) {
+				this.frm.set_value("conversion_rate", 1.0);
+			} else {
+				this.conversion_rate();
+			}
 		}
 	},
 

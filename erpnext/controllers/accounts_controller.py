@@ -47,6 +47,7 @@ from erpnext.controllers.print_settings import (
 from erpnext.controllers.sales_and_purchase_return import validate_return
 from erpnext.exceptions import InvalidCurrency
 from erpnext.setup.utils import get_exchange_rate
+from erpnext.stock.doctype.item.item import get_uom_conv_factor
 from erpnext.stock.doctype.packed_item.packed_item import make_packing_list
 from erpnext.stock.get_item_details import (
 	_get_item_tax_template,
@@ -545,6 +546,15 @@ class AccountsController(TransactionBase):
 					if ret.get("pricing_rules"):
 						self.apply_pricing_rule_on_items(item, ret)
 						self.set_pricing_rule_details(item, ret)
+				else:
+					# Transactions line item without item code
+
+					uom = item.get("uom")
+					stock_uom = item.get("stock_uom")
+					if bool(uom) != bool(stock_uom):  # xor
+						item.stock_uom = item.uom = uom or stock_uom
+
+					item.conversion_factor = get_uom_conv_factor(item.get("uom"), item.get("stock_uom"))
 
 			if self.doctype == "Purchase Invoice":
 				self.set_expense_account(for_validate)
@@ -1459,8 +1469,8 @@ class AccountsController(TransactionBase):
 
 		if not party_gle_currency and (party_account_currency != self.currency):
 			frappe.throw(
-				_("Party Account {0} currency and document currency should be same").format(
-					frappe.bold(party_account)
+				_("Party Account {0} currency ({1}) and document currency ({2}) should be same").format(
+					frappe.bold(party_account), party_account_currency, self.currency
 				)
 			)
 
@@ -1831,6 +1841,17 @@ class AccountsController(TransactionBase):
 
 		jv.save()
 		jv.submit()
+
+	def check_conversion_rate(self):
+		default_currency = erpnext.get_company_currency(self.company)
+		if not default_currency:
+			throw(_("Please enter default currency in Company Master"))
+		if (
+			(self.currency == default_currency and flt(self.conversion_rate) != 1.00)
+			or not self.conversion_rate
+			or (self.currency != default_currency and flt(self.conversion_rate) == 1.00)
+		):
+			throw(_("Conversion rate cannot be 0 or 1"))
 
 
 @frappe.whitelist()
@@ -2413,7 +2434,7 @@ def update_bin_on_delete(row, doctype):
 		update_bin_qty(row.item_code, row.warehouse, qty_dict)
 
 
-def validate_and_delete_children(parent, data):
+def validate_and_delete_children(parent, data) -> bool:
 	deleted_children = []
 	updated_item_names = [d.get("docname") for d in data]
 	for item in parent.items:
@@ -2431,6 +2452,8 @@ def validate_and_delete_children(parent, data):
 
 	for d in deleted_children:
 		update_bin_on_delete(d, parent.doctype)
+
+	return bool(deleted_children)
 
 
 
@@ -2527,13 +2550,38 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 		):
 			frappe.throw(_("Cannot set quantity less than received quantity"))
 
+	def should_update_supplied_items(doc) -> bool:
+		"""Subcontracted PO can allow following changes *after submit*:
+
+		1. Change rate of subcontracting - regardless of other changes.
+		2. Change qty and/or add new items and/or remove items
+		        Exception: Transfer/Consumption is already made, qty change not allowed.
+		"""
+
+		supplied_items_processed = any(
+			item.supplied_qty or item.consumed_qty or item.returned_qty for item in doc.supplied_items
+		)
+
+		update_supplied_items = (
+			any_qty_changed or items_added_or_removed or any_conversion_factor_changed
+		)
+		if update_supplied_items and supplied_items_processed:
+			frappe.throw(_("Item qty can not be updated as raw materials are already processed."))
+
+		return update_supplied_items
+
 	data = json.loads(trans_items)
+
+	any_qty_changed = False  # updated to true if any item's qty changes
+	items_added_or_removed = False  # updated to true if any new item is added or removed
+	any_conversion_factor_changed = False
 
 	sales_doctypes = ["Sales Order", "Sales Invoice", "Delivery Note", "Quotation"]
 	parent = frappe.get_doc(parent_doctype, parent_doctype_name)
 
 	check_doc_permissions(parent, "write")
-	validate_and_delete_children(parent, data)
+	_removed_items = validate_and_delete_children(parent, data)
+	items_added_or_removed |= _removed_items
 
 	for d in data:
 		new_child_flag = False
@@ -2544,6 +2592,7 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 
 		if not d.get("docname"):
 			new_child_flag = True
+			items_added_or_removed = True
 			check_doc_permissions(parent, "create")
 			child_item = get_new_child_item(d)
 		else:
@@ -2566,6 +2615,7 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 			qty_unchanged = prev_qty == new_qty
 			uom_unchanged = prev_uom == new_uom
 			conversion_factor_unchanged = prev_con_fac == new_con_fac
+			any_conversion_factor_changed |= not conversion_factor_unchanged
 			date_unchanged = (
 				prev_date == getdate(new_date) if prev_date and new_date else False
 			)  # in case of delivery note etc
@@ -2579,6 +2629,8 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 				continue
 
 		validate_quantity(child_item, d)
+		if flt(child_item.get("qty")) != flt(d.get("qty")):
+			any_qty_changed = True
 
 		child_item.qty = flt(d.get("qty"))
 		rate_precision = child_item.precision("rate") or 2
@@ -2684,10 +2736,12 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 		parent.update_ordered_and_reserved_qty()
 		parent.update_receiving_percentage()
 		if parent.is_subcontracted == "Yes":
-			parent.update_reserved_qty_for_subcontract()
-			parent.create_raw_materials_supplied("supplied_items")
+			if should_update_supplied_items(parent):
+				parent.update_reserved_qty_for_subcontract()
+				parent.create_raw_materials_supplied("supplied_items")
 			parent.save()
-	else:
+	else:  # Sales Order
+		parent.validate_warehouse()
 		parent.update_reserved_qty()
 		parent.update_project()
 		parent.update_prevdoc_status("submit")
