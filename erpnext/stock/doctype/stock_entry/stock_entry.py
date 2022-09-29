@@ -879,6 +879,27 @@ class StockEntry(StockController):
 							se_item.idx, se_item.item_code, total_allowed, self.purchase_order
 						)
 					)
+				elif not se_item.get("po_detail"):
+					filters = {
+						"parent": self.purchase_order,
+						"docstatus": 1,
+						"rm_item_code": se_item.item_code,
+						"main_item_code": se_item.subcontracted_item,
+					}
+
+					order_rm_detail = frappe.db.get_value("Purchase Order Item Supplied", filters, "name")
+					if order_rm_detail:
+						se_item.db_set("po_detail", order_rm_detail)
+					else:
+						if not se_item.allow_alternative_item:
+							frappe.throw(
+								_("Row {0}# Item {1} not found in 'Raw Materials Supplied' table in {2} {3}").format(
+									se_item.idx,
+									se_item.item_code,
+									"Purchase Order",
+									self.purchase_order,
+								)
+							)
 		elif backflush_raw_materials_based_on == "Material Transferred for Subcontract":
 			for row in self.items:
 				if not row.subcontracted_item:
@@ -994,8 +1015,8 @@ class StockEntry(StockController):
 			# No work order could mean independent Manufacture entry, if so skip validation
 			if self.work_order and self.fg_completed_qty > allowed_qty:
 				frappe.throw(
-					_("For quantity {0} should not be greater than work order quantity {1}").format(
-						flt(self.fg_completed_qty), wo_qty
+					_("For quantity {0} should not be greater than allowed quantity {1}").format(
+						flt(self.fg_completed_qty), allowed_qty
 					)
 				)
 
