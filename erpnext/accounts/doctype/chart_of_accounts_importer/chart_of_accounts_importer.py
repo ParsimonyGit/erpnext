@@ -7,19 +7,29 @@ from collections import defaultdict
 from functools import reduce
 
 import frappe
-from erpnext.accounts.doctype.account.chart_of_accounts.chart_of_accounts import build_tree_from_json, create_charts
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, cstr
 from frappe.utils.csvutils import UnicodeWriter
-from frappe.utils.xlsxutils import read_xls_file_from_attached_file, read_xlsx_file_from_attached_file
+from frappe.utils.xlsxutils import (
+	read_xls_file_from_attached_file,
+	read_xlsx_file_from_attached_file,
+)
+
+from erpnext.accounts.doctype.account.chart_of_accounts.chart_of_accounts import (
+	build_tree_from_json,
+	create_charts,
+)
 
 
 class ChartofAccountsImporter(Document):
 	def validate(self):
 		if self.import_file:
 			get_coa(
-				"Chart of Accounts Importer", "All Accounts", file_name=self.import_file, for_validate=1
+				"Chart of Accounts Importer",
+				"All Accounts",
+				file_name=self.import_file,
+				for_validate=1,
 			)
 
 
@@ -31,7 +41,9 @@ def validate_columns(data):
 
 	if no_of_columns > 7:
 		frappe.throw(
-			_("More columns found than expected. Please compare the uploaded file with standard template"),
+			_(
+				"More columns found than expected. Please compare the uploaded file with standard template"
+			),
 			title=(_("Wrong Template")),
 		)
 
@@ -39,14 +51,16 @@ def validate_columns(data):
 @frappe.whitelist()
 def validate_company(company):
 	parent_company, allow_account_creation_against_child_company = frappe.db.get_value(
-		"Company", {"name": company}, ["parent_company", "allow_account_creation_against_child_company"]
+		"Company",
+		{"name": company},
+		["parent_company", "allow_account_creation_against_child_company"],
 	)
 
 	if parent_company and (not allow_account_creation_against_child_company):
 		msg = _("{} is a child company.").format(frappe.bold(company)) + " "
-		msg += _("Please import accounts against parent company or enable {} in company master.").format(
-			frappe.bold("Allow Account Creation Against Child Company")
-		)
+		msg += _(
+			"Please import accounts against parent company or enable {} in company master."
+		).format(frappe.bold("Allow Account Creation Against Child Company"))
 		frappe.throw(msg, title=_("Wrong Company"))
 
 	if frappe.db.get_all("GL Entry", {"company": company}, "name", limit=1):
@@ -103,7 +117,9 @@ def generate_data_from_csv(file_doc, as_dict=False):
 
 		for row in csv_reader:
 			if as_dict:
-				data.append({frappe.scrub(header): row[index] for index, header in enumerate(headers)})
+				data.append(
+					{frappe.scrub(header): row[index] for index, header in enumerate(headers)}
+				)
 			else:
 				if not row[1]:
 					row[1] = row[0]
@@ -206,9 +222,9 @@ def build_forest(data):
 				parent_account_list = return_parent(data, parent_account)
 				if not parent_account_list and parent_account:
 					frappe.throw(
-						_("The parent account {0} does not exists in the uploaded template").format(
-							frappe.bold(parent_account)
-						)
+						_(
+							"The parent account {0} does not exists in the uploaded template"
+						).format(frappe.bold(parent_account))
 					)
 				return [child] + parent_account_list
 
@@ -219,7 +235,16 @@ def build_forest(data):
 	error_messages = []
 
 	for row in data:
-		account_name, parent_account, account_number, parent_account_number, is_group, account_type, root_type, *others = row
+		(
+			account_name,
+			parent_account,
+			account_number,
+			parent_account_number,
+			is_group,
+			account_type,
+			root_type,
+			*others,
+		) = row
 
 		if not account_name:
 			error_messages.append("Row {0}: Please enter Account Name".format(line_no))
@@ -389,9 +414,9 @@ def validate_root(accounts):
 			)
 		elif account.get("root_type") not in get_root_types() and account.get("account_name"):
 			error_messages.append(
-				_("Root Type for {0} must be one of the Asset, Liability, Income, Expense and Equity").format(
-					account.get("account_name")
-				)
+				_(
+					"Root Type for {0} must be one of the Asset, Liability, Income, Expense and Equity"
+				).format(account.get("account_name"))
 			)
 
 	validate_missing_roots(roots)

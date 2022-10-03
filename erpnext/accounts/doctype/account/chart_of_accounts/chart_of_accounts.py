@@ -14,7 +14,7 @@ COA_FIELD_KEYS = ["account_number", "account_name", "account_type", "root_type",
 	"is_group", "tax_rate", "account_currency"]
 
 
-def create_charts(company, chart_template=None, existing_company=None, custom_chart=None):
+def create_charts(company, chart_template=None, existing_company=None, custom_chart=None, from_coa_importer=None):
 	chart = custom_chart or get_chart(chart_template, existing_company)
 	if not chart:
 		return
@@ -38,7 +38,7 @@ def create_charts(company, chart_template=None, existing_company=None, custom_ch
 
 			account = frappe.get_doc({
 				"doctype": "Account",
-				"account_name": account_name,
+				"account_name": child.get("account_name") if from_coa_importer else account_name,
 				"company": company,
 				"parent_account": parent,
 				"is_group": child.get("is_group"),
@@ -46,7 +46,7 @@ def create_charts(company, chart_template=None, existing_company=None, custom_ch
 				"report_type": report_type,
 				"account_number": account_number,
 				"account_type": child.get("account_type"),
-				"account_currency": child.get('account_currency') or frappe.db.get_value('Company', company, "default_currency"),
+				"account_currency": child.get("account_currency") or frappe.db.get_value("Company", company, "default_currency"),
 				"tax_rate": child.get("tax_rate")
 			})
 
@@ -60,10 +60,10 @@ def create_charts(company, chart_template=None, existing_company=None, custom_ch
 
 	# Rebuild NestedSet HSM tree for Account Doctype
 	# after all accounts are already inserted.
-	frappe.local.flags.ignore_on_update = True
+	frappe.local.flags.ignore_update_nsm = True
 	_import_accounts(chart, None, None, root_account=True)
 	rebuild_tree("Account", "parent_account")
-	frappe.local.flags.ignore_on_update = False
+	frappe.local.flags.ignore_update_nsm = False
 
 
 def add_suffix_if_duplicate(account_name, account_number, accounts):
@@ -150,7 +150,7 @@ def get_charts_for_country(country, with_standard=False):
 def get_account_tree_from_existing_company(existing_company):
 	fields = COA_FIELD_KEYS.copy()
 	fields.extend(["name", "account_name", "parent_account"])
-	all_accounts = frappe.get_all('Account', filters={'company': existing_company}, fields=fields, order_by="lft, rgt")
+	all_accounts = frappe.get_all("Account", filters={"company": existing_company}, fields=fields, order_by="lft, rgt")
 
 	# fill in tree starting with root accounts (those with no parent)
 	account_tree = {}
@@ -226,9 +226,12 @@ def build_tree_from_json(chart_template, chart_data=None, from_coa_importer=Fals
 			if account_name in COA_FIELD_KEYS:
 				continue
 
-			account['parent_account'] = parent
-			account['expandable'] = child.get("is_group")
-			account['value'] = (
+			if from_coa_importer:
+				account_name = child["account_name"]
+
+			account["parent_account"] = parent
+			account["expandable"] = child.get("is_group")
+			account["value"] = (
 				(cstr(child.get("account_number")).strip() + " - " + account_name)
 				if child.get("account_number")
 				else account_name
