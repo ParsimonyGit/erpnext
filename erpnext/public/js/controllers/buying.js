@@ -82,26 +82,7 @@ erpnext.buying.BuyingController = class BuyingController extends erpnext.Transac
 		}
 
 		this.frm.set_query("item_code", "items", function() {
-			if (me.frm.doc.is_subcontracted) {
-				var filters = {'supplier': me.frm.doc.supplier};
-				if (me.frm.doc.is_old_subcontracting_flow) {
-					filters["is_sub_contracted_item"] = 1;
-				}
-				else {
-					filters["is_stock_item"] = 0;
-				}
-
-				return{
-					query: "erpnext.controllers.queries.item_query",
-					filters: filters
-				}
-			}
-			else {
-				return{
-					query: "erpnext.controllers.queries.item_query",
-					filters: { 'supplier': me.frm.doc.supplier, 'is_purchase_item': 1, 'has_variants': 0}
-				}
-			}
+			return me.get_item_query(me.frm.doc);
 		});
 
 
@@ -145,6 +126,10 @@ erpnext.buying.BuyingController = class BuyingController extends erpnext.Transac
 		}
 	}
 
+	filter_items_by_supplier() {
+		this.set_item_query();
+	}
+
 	supplier() {
 		var me = this;
 		erpnext.utils.get_party_details(this.frm, null, null, function(){
@@ -182,6 +167,48 @@ erpnext.buying.BuyingController = class BuyingController extends erpnext.Transac
 
 	rejected_qty(doc, cdt, cdn) {
 		this.calculate_received_qty(doc, cdt, cdn)
+	}
+
+	set_item_query() {
+		var me = this;
+		this.frm.fields_dict.items.grid.set_custom_query = function () {
+			me.frm.set_query("item_code", "items", function (doc) {
+				return me.get_item_query(doc);
+			});
+		}
+
+		this.frm.set_query("item_code", "items", function (doc) {
+			return me.get_item_query(doc);
+		});
+	}
+
+	get_item_query(doc) {
+		if (doc.supplier && doc.filter_items_by_supplier) {
+			return {
+				query: "erpnext.controllers.queries.item_supplier_query",
+				filters: {
+					'supplier': doc.supplier,
+					'is_purchase_item': 1
+				}
+			}
+		} else if (doc.is_subcontracted) {
+			var filters = {'supplier': doc.supplier};
+			if (doc.is_old_subcontracting_flow) {
+				filters["is_sub_contracted_item"] = 1;
+			} else {
+				filters["is_stock_item"] = 0;
+			}
+
+			return {
+				query: "erpnext.controllers.queries.item_query",
+				filters: filters
+			}
+		} else {
+			return {
+				query: "erpnext.controllers.queries.item_query",
+				filters: { 'supplier': doc.supplier, 'is_purchase_item': 1, 'has_variants': 0}
+			}
+		}
 	}
 
 	calculate_received_qty(doc, cdt, cdn){

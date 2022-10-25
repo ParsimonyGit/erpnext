@@ -10,71 +10,60 @@ from frappe.utils.nestedset import rebuild_tree
 from unidecode import unidecode
 
 
-def create_charts(
-	company, chart_template=None, existing_company=None, custom_chart=None, from_coa_importer=None
-):
+COA_FIELD_KEYS = ["account_number", "account_name", "account_type", "root_type",
+	"is_group", "tax_rate", "account_currency"]
+
+
+def create_charts(company, chart_template=None, existing_company=None, custom_chart=None, from_coa_importer=None):
 	chart = custom_chart or get_chart(chart_template, existing_company)
-	if chart:
-		accounts = []
+	if not chart:
+		return
 
-		def _import_accounts(children, parent, root_type, root_account=False):
-			for account_name, child in children.items():
-				if root_account:
-					root_type = child.get("root_type")
+	accounts = []
 
-				if account_name not in [
-					"account_name",
-					"account_number",
-					"account_type",
-					"root_type",
-					"is_group",
-					"tax_rate",
-				]:
+	def _import_accounts(children, parent, root_type, root_account=False):
+		for account_name, child in children.items():
+			if account_name in COA_FIELD_KEYS:
+				continue
 
-					account_number = cstr(child.get("account_number")).strip()
-					account_name, account_name_in_db = add_suffix_if_duplicate(
-						account_name, account_number, accounts
-					)
+			if root_account:
+				root_type = child.get("root_type")
 
-					is_group = identify_is_group(child)
-					report_type = (
-						"Balance Sheet" if root_type in ["Asset", "Liability", "Equity"] else "Profit and Loss"
-					)
+			account_number = cstr(child.get("account_number")).strip()
+			account_name, account_name_in_db = add_suffix_if_duplicate(account_name,
+				account_number, accounts)
 
-					account = frappe.get_doc(
-						{
-							"doctype": "Account",
-							"account_name": child.get("account_name") if from_coa_importer else account_name,
-							"company": company,
-							"parent_account": parent,
-							"is_group": is_group,
-							"root_type": root_type,
-							"report_type": report_type,
-							"account_number": account_number,
-							"account_type": child.get("account_type"),
-							"account_currency": child.get("account_currency")
-							or frappe.db.get_value("Company", company, "default_currency"),
-							"tax_rate": child.get("tax_rate"),
-						}
-					)
+			report_type = "Balance Sheet" if root_type in ["Asset", "Liability", "Equity"] \
+				else "Profit and Loss"
 
-					if root_account or frappe.local.flags.allow_unverified_charts:
-						account.flags.ignore_mandatory = True
+			account = frappe.get_doc({
+				"doctype": "Account",
+				"account_name": child.get("account_name") if from_coa_importer else account_name,
+				"company": company,
+				"parent_account": parent,
+				"is_group": child.get("is_group"),
+				"root_type": root_type,
+				"report_type": report_type,
+				"account_number": account_number,
+				"account_type": child.get("account_type"),
+				"account_currency": child.get("account_currency") or frappe.db.get_value("Company", company, "default_currency"),
+				"tax_rate": child.get("tax_rate")
+			})
 
-					account.flags.ignore_permissions = True
+			if root_account or frappe.local.flags.allow_unverified_charts:
+				account.flags.ignore_mandatory = True
 
-					account.insert()
+			account.flags.ignore_permissions = True
+			account.insert()
+			accounts.append(account_name_in_db)
+			_import_accounts(child, account.name, root_type)
 
-					accounts.append(account_name_in_db)
-
-					_import_accounts(child, account.name, root_type)
-
-		# Rebuild NestedSet HSM tree for Account Doctype
-		# after all accounts are already inserted.
-		frappe.local.flags.ignore_update_nsm = True
-		_import_accounts(chart, None, None, root_account=True)
-		rebuild_tree("Account", "parent_account")
-		frappe.local.flags.ignore_update_nsm = False
+	# Rebuild NestedSet HSM tree for Account Doctype
+	# after all accounts are already inserted.
+	frappe.local.flags.ignore_update_nsm = True
+	_import_accounts(chart, None, None, root_account=True)
+	rebuild_tree("Account", "parent_account")
+	frappe.local.flags.ignore_update_nsm = False
 
 
 def add_suffix_if_duplicate(account_name, account_number, accounts):
@@ -88,20 +77,6 @@ def add_suffix_if_duplicate(account_name, account_number, accounts):
 		account_name = account_name + " " + cstr(count)
 
 	return account_name, account_name_in_db
-
-
-def identify_is_group(child):
-	if child.get("is_group"):
-		is_group = child.get("is_group")
-	elif len(
-		set(child.keys())
-		- set(["account_name", "account_type", "root_type", "is_group", "tax_rate", "account_number"])
-	):
-		is_group = 1
-	else:
-		is_group = 0
-
-	return is_group
 
 
 def get_chart(chart_template, existing_company=None):
@@ -173,25 +148,12 @@ def get_charts_for_country(country, with_standard=False):
 
 
 def get_account_tree_from_existing_company(existing_company):
-	all_accounts = frappe.get_all(
-		"Account",
-		filters={"company": existing_company},
-		fields=[
-			"name",
-			"account_name",
-			"parent_account",
-			"account_type",
-			"is_group",
-			"root_type",
-			"tax_rate",
-			"account_number",
-		],
-		order_by="lft, rgt",
-	)
-
-	account_tree = {}
+	fields = COA_FIELD_KEYS.copy()
+	fields.extend(["name", "account_name", "parent_account"])
+	all_accounts = frappe.get_all("Account", filters={"company": existing_company}, fields=fields, order_by="lft, rgt")
 
 	# fill in tree starting with root accounts (those with no parent)
+	account_tree = {}
 	if all_accounts:
 		build_account_tree(account_tree, None, all_accounts)
 	return account_tree
@@ -209,16 +171,18 @@ def build_account_tree(tree, parent, all_accounts):
 
 	# build a subtree for each child
 	for child in children:
-		# start new subtree
 		tree[child.account_name] = {}
 
-		# assign account_type and root_type
 		if child.account_number:
 			tree[child.account_name]["account_number"] = child.account_number
 		if child.account_type:
 			tree[child.account_name]["account_type"] = child.account_type
+		if child.account_currency:
+			tree[child.account_name]["account_currency"] = child.account_currency
 		if child.tax_rate:
 			tree[child.account_name]["tax_rate"] = child.tax_rate
+		if child.is_group:
+			tree[child.account_name]["is_group"] = child.is_group
 		if not parent:
 			tree[child.account_name]["root_type"] = child.root_type
 
@@ -235,9 +199,8 @@ def validate_bank_account(coa, bank_account):
 
 		def _get_account_names(account_master):
 			for account_name, child in account_master.items():
-				if account_name not in ["account_number", "account_type", "root_type", "is_group", "tax_rate"]:
+				if account_name not in COA_FIELD_KEYS:
 					accounts.append(account_name)
-
 					_get_account_names(child)
 
 		_get_account_names(chart)
@@ -260,21 +223,14 @@ def build_tree_from_json(chart_template, chart_data=None, from_coa_importer=Fals
 		"""recursively called to form a parent-child based list of dict from chart template"""
 		for account_name, child in children.items():
 			account = {}
-			if account_name in [
-				"account_name",
-				"account_number",
-				"account_type",
-				"root_type",
-				"is_group",
-				"tax_rate",
-			]:
+			if account_name in COA_FIELD_KEYS:
 				continue
 
 			if from_coa_importer:
 				account_name = child["account_name"]
 
 			account["parent_account"] = parent
-			account["expandable"] = True if identify_is_group(child) else False
+			account["expandable"] = child.get("is_group")
 			account["value"] = (
 				(cstr(child.get("account_number")).strip() + " - " + account_name)
 				if child.get("account_number")

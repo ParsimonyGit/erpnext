@@ -212,21 +212,15 @@ def item_query(doctype, txt, searchfield, start, page_len, filters, as_dict=Fals
 	meta = frappe.get_meta(doctype, cached=True)
 	searchfields = meta.get_search_fields()
 
-	# these are handled separately
-	ignored_search_fields = ("item_name", "description")
-	for ignored_field in ignored_search_fields:
-		if ignored_field in searchfields:
-			searchfields.remove(ignored_field)
-
 	columns = ""
-	extra_searchfields = [
-		field
-		for field in searchfields
-		if not field in ["name", "item_group", "description", "item_name"]
-	]
+	extra_searchfields = [field for field in searchfields if not field in ["name", "description"]]
 
 	if extra_searchfields:
-		columns = ", " + ", ".join(extra_searchfields)
+		columns += ", " + ", ".join(extra_searchfields)
+
+	if "description" in searchfields:
+		columns += """, if(length(tabItem.description) > 40, \
+			concat(substr(tabItem.description, 1, 40), "..."), description) as description"""
 
 	searchfields = searchfields + [
 		field
@@ -266,12 +260,10 @@ def item_query(doctype, txt, searchfield, start, page_len, filters, as_dict=Fals
 	if frappe.db.count(doctype, cache=True) < 50000:
 		# scan description only if items are less than 50000
 		description_cond = "or tabItem.description LIKE %(txt)s"
+
 	return frappe.db.sql(
 		"""select
-			tabItem.name, tabItem.item_name, tabItem.item_group,
-		if(length(tabItem.description) > 40, \
-			concat(substr(tabItem.description, 1, 40), "..."), description) as description
-		{columns}
+			tabItem.name {columns}
 		from tabItem
 		where tabItem.docstatus < 2
 			and tabItem.disabled=0
@@ -816,3 +808,31 @@ def get_fields(doctype, fields=None):
 		fields.insert(1, meta.title_field.strip())
 
 	return unique(fields)
+
+
+@frappe.whitelist()
+@frappe.validate_and_sanitize_search_inputs
+def item_supplier_query(doctype, txt, searchfield, start, page_len, filters):
+	item_suppliers = frappe.get_all('Item Supplier',
+		filters={'supplier': filters.get('supplier')},
+		fields=['parent'],
+		distinct=True)
+
+	item_defaults = frappe.get_all('Item Default',
+		filters={'default_supplier': filters.get('supplier')},
+		fields=['parent'],
+		distinct=True)
+
+	supplier_item_codes = item_suppliers + item_defaults
+	supplier_item_codes = [supplier.parent for supplier in supplier_item_codes]
+
+	supplier_items = frappe.get_all('Item',
+		filters={
+			'item_code': ['in', supplier_item_codes],
+			'is_purchase_item': filters.get('is_purchase_item')
+		},
+		fields=["name", "item_name", "item_group", "description"],
+		distinct=True,
+		as_list=True
+	)
+	return supplier_items

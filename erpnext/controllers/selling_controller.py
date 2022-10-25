@@ -311,6 +311,7 @@ class SellingController(StockController):
 									"sales_invoice_item": d.get("sales_invoice_item"),
 									"dn_detail": d.get("dn_detail"),
 									"incoming_rate": p.get("incoming_rate"),
+									"item_row": p,
 								}
 							)
 						)
@@ -334,6 +335,7 @@ class SellingController(StockController):
 							"sales_invoice_item": d.get("sales_invoice_item"),
 							"dn_detail": d.get("dn_detail"),
 							"incoming_rate": d.get("incoming_rate"),
+							"item_row": d,
 						}
 					)
 				)
@@ -440,11 +442,17 @@ class SellingController(StockController):
 				# For internal transfers use incoming rate as the valuation rate
 				if self.is_internal_transfer():
 					if d.doctype == "Packed Item":
-						incoming_rate = flt(d.incoming_rate * d.conversion_factor, d.precision("incoming_rate"))
+						incoming_rate = flt(
+							flt(d.incoming_rate, d.precision("incoming_rate")) * d.conversion_factor,
+							d.precision("incoming_rate"),
+						)
 						if d.incoming_rate != incoming_rate:
 							d.incoming_rate = incoming_rate
 					else:
-						rate = flt(d.incoming_rate * d.conversion_factor, d.precision("rate"))
+						rate = flt(
+							flt(d.incoming_rate, d.precision("incoming_rate")) * d.conversion_factor,
+							d.precision("rate"),
+						)
 						if d.rate != rate:
 							d.rate = rate
 							frappe.msgprint(

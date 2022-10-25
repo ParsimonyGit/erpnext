@@ -3,6 +3,7 @@
     "name": "Switzerland - Plan comptable STERCHI",
     "tree": {
         "Actif": {
+            "is_group": 1,
             "Actifs circulants": {
                 "Actifs de r\u00e9gularisation": {
                     "Actifs de r\u00e9gularisation (Actifs transitoires)": {
