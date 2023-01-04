@@ -149,14 +149,16 @@ class PaymentReconciliation(Document):
 
 		reconciled_dr_or_cr = (
 			gl["debit_in_account_currency"]
-			if dr_or_cr == gl["credit_in_account_currency"]
+			if dr_or_cr.name == "credit_in_account_currency"
 			else gl["credit_in_account_currency"]
 		)
 
+		having_clause = qb.Field("amount") > 0
+
 		if self.minimum_payment_amount:
-			conditions.append(dr_or_cr.gte(self.minimum_payment_amount))
+			having_clause = qb.Field("amount") >= self.minimum_payment_amount
 		if self.maximum_payment_amount:
-			conditions.append(dr_or_cr.lte(self.maximum_payment_amount))
+			having_clause = having_clause & qb.Field("amount") <= self.maximum_payment_amount
 
 		sub_query = (
 			qb.from_(doc)
@@ -172,23 +174,23 @@ class PaymentReconciliation(Document):
 		query = (
 			qb.from_(gl)
 			.select(
-				gl.voucher_type.as_("reference_type"),
-				gl.voucher_no.as_("reference_name"),
+				gl.against_voucher_type.as_("reference_type"),
+				gl.against_voucher.as_("reference_name"),
 				(Sum(dr_or_cr) - Sum(reconciled_dr_or_cr)).as_("amount"),
 				gl.posting_date,
 				gl.account_currency.as_("currency"),
 			)
 			.where(
-				(gl.voucher_type == voucher_type)
-				& (gl.voucher_no.isin(sub_query))
+				(gl.against_voucher.isin(sub_query))
+				& (gl.against_voucher_type == voucher_type)
 				& (gl.is_cancelled == 0)
 				& (gl.account == self.receivable_payable_account)
 				& (gl.party_type == self.party_type)
 				& (gl.party == self.party)
 			)
 			.where(Criterion.all(conditions))
-			.groupby(gl.voucher_no)
-			.having(qb.Field("amount") > 0)
+			.groupby(gl.against_voucher)
+			.having(having_clause)
 		)
 		dr_cr_notes = query.run(as_dict=True)
 		return dr_cr_notes
