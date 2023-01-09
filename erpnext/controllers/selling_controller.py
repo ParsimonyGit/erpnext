@@ -26,7 +26,7 @@ class SellingController(StockController):
 		super(SellingController, self).onload()
 		if self.doctype in ("Sales Order", "Delivery Note", "Sales Invoice"):
 			for item in self.get("items"):
-				item.update(get_bin_details(item.item_code, item.warehouse))
+				item.update(get_bin_details(item.item_code, item.warehouse, include_child_warehouses=True))
 
 	def validate(self):
 		super(SellingController, self).validate()
@@ -40,6 +40,7 @@ class SellingController(StockController):
 		self.set_customer_address()
 		self.validate_for_duplicate_items()
 		self.validate_target_warehouse()
+		self.validate_auto_repeat_subscription_dates()
 
 	def set_missing_values(self, for_validate=False):
 
@@ -441,30 +442,31 @@ class SellingController(StockController):
 
 				# For internal transfers use incoming rate as the valuation rate
 				if self.is_internal_transfer():
-					if d.doctype == "Packed Item":
-						incoming_rate = flt(
-							flt(d.incoming_rate, d.precision("incoming_rate")) * d.conversion_factor,
-							d.precision("incoming_rate"),
-						)
-						if d.incoming_rate != incoming_rate:
-							d.incoming_rate = incoming_rate
-					else:
-						rate = flt(
-							flt(d.incoming_rate, d.precision("incoming_rate")) * d.conversion_factor,
-							d.precision("rate"),
-						)
-						if d.rate != rate:
-							d.rate = rate
-							frappe.msgprint(
-								_(
-									"Row {0}: Item rate has been updated as per valuation rate since its an internal stock transfer"
-								).format(d.idx),
-								alert=1,
+					if self.doctype == "Delivery Note" or self.get("update_stock"):
+						if d.doctype == "Packed Item":
+							incoming_rate = flt(
+								flt(d.incoming_rate, d.precision("incoming_rate")) * d.conversion_factor,
+								d.precision("incoming_rate"),
 							)
+							if d.incoming_rate != incoming_rate:
+								d.incoming_rate = incoming_rate
+						else:
+							rate = flt(
+								flt(d.incoming_rate, d.precision("incoming_rate")) * d.conversion_factor,
+								d.precision("rate"),
+							)
+							if d.rate != rate:
+								d.rate = rate
+								frappe.msgprint(
+									_(
+										"Row {0}: Item rate has been updated as per valuation rate since its an internal stock transfer"
+									).format(d.idx),
+									alert=1,
+								)
 
-						d.discount_percentage = 0.0
-						d.discount_amount = 0.0
-						d.margin_rate_or_amount = 0.0
+							d.discount_percentage = 0.0
+							d.discount_amount = 0.0
+							d.margin_rate_or_amount = 0.0
 
 			elif self.get("return_against"):
 				# Get incoming rate of return entry from reference document
@@ -581,6 +583,7 @@ class SellingController(StockController):
 			"customer_address": "address_display",
 			"shipping_address_name": "shipping_address",
 			"company_address": "company_address_display",
+			"dispatch_address_name": "dispatch_address",
 		}
 
 		for address_field, address_display_field in address_dict.items():

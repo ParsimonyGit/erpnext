@@ -224,15 +224,26 @@ class TestAsset(AssetSetup):
 			asset.finance_books[0], 9000, get_last_day(add_months(purchase_date, 1)), date
 		)
 		pro_rata_amount = flt(pro_rata_amount, asset.precision("gross_purchase_amount"))
-		self.assertEquals(accumulated_depr_amount, 18000.00 + pro_rata_amount)
+		self.assertEquals(
+			accumulated_depr_amount,
+			flt(18000.0 + pro_rata_amount, asset.precision("gross_purchase_amount")),
+		)
 
 		self.assertEqual(asset.status, "Scrapped")
 		self.assertTrue(asset.journal_entry_for_scrap)
 
 		expected_gle = (
-			("_Test Accumulated Depreciations - _TC", 18000.0 + pro_rata_amount, 0.0),
+			(
+				"_Test Accumulated Depreciations - _TC",
+				flt(18000.0 + pro_rata_amount, asset.precision("gross_purchase_amount")),
+				0.0,
+			),
 			("_Test Fixed Asset - _TC", 0.0, 100000.0),
-			("_Test Gain/Loss on Asset Disposal - _TC", 82000.0 - pro_rata_amount, 0.0),
+			(
+				"_Test Gain/Loss on Asset Disposal - _TC",
+				flt(82000.0 - pro_rata_amount, asset.precision("gross_purchase_amount")),
+				0.0,
+			),
 		)
 
 		gle = frappe.db.sql(
@@ -253,7 +264,7 @@ class TestAsset(AssetSetup):
 			asset.gross_purchase_amount - asset.finance_books[0].value_after_depreciation,
 			asset.precision("gross_purchase_amount"),
 		)
-		this_month_depr_amount = 9000.0 if get_last_day(date) == date else 0
+		this_month_depr_amount = 9000.0 if is_last_day_of_the_month(date) else 0
 
 		self.assertEquals(accumulated_depr_amount, 18000.0 + this_month_depr_amount)
 
@@ -288,9 +299,17 @@ class TestAsset(AssetSetup):
 		pro_rata_amount = flt(pro_rata_amount, asset.precision("gross_purchase_amount"))
 
 		expected_gle = (
-			("_Test Accumulated Depreciations - _TC", 18000.0 + pro_rata_amount, 0.0),
+			(
+				"_Test Accumulated Depreciations - _TC",
+				flt(18000.0 + pro_rata_amount, asset.precision("gross_purchase_amount")),
+				0.0,
+			),
 			("_Test Fixed Asset - _TC", 0.0, 100000.0),
-			("_Test Gain/Loss on Asset Disposal - _TC", 57000.0 - pro_rata_amount, 0.0),
+			(
+				"_Test Gain/Loss on Asset Disposal - _TC",
+				flt(57000.0 - pro_rata_amount, asset.precision("gross_purchase_amount")),
+				0.0,
+			),
 			("Debtors - _TC", 25000.0, 0.0),
 		)
 
@@ -1459,6 +1478,7 @@ def create_asset(**args):
 			"asset_owner": args.asset_owner or "Company",
 			"is_existing_asset": args.is_existing_asset or 1,
 			"asset_quantity": args.get("asset_quantity") or 1,
+			"depr_entry_posting_status": args.depr_entry_posting_status or "",
 		}
 	)
 
@@ -1557,3 +1577,9 @@ def set_depreciation_settings_in_company(company=None):
 
 def enable_cwip_accounting(asset_category, enable=1):
 	frappe.db.set_value("Asset Category", asset_category, "enable_cwip_accounting", enable)
+
+
+def is_last_day_of_the_month(dt):
+	last_day_of_the_month = get_last_day(dt)
+
+	return getdate(dt) == getdate(last_day_of_the_month)

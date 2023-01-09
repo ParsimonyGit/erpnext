@@ -252,7 +252,8 @@ erpnext.buying.BuyingController = class BuyingController extends erpnext.Transac
 				args: {
 					item_code: item.item_code,
 					warehouse: item.warehouse,
-					company: doc.company
+					company: doc.company,
+					include_child_warehouses: true
 				}
 			});
 		}

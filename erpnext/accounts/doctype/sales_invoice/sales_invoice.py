@@ -367,7 +367,7 @@ class SalesInvoice(SellingController):
 		if self.update_stock == 1:
 			self.repost_future_sle_and_gle()
 
-		frappe.db.set(self, "status", "Cancelled")
+		self.db_set("status", "Cancelled")
 
 		if (
 			frappe.db.get_single_value("Selling Settings", "sales_update_frequency") == "Each Transaction"
@@ -1300,7 +1300,11 @@ class SalesInvoice(SellingController):
 
 	def make_write_off_gl_entry(self, gl_entries):
 		# write off entries, applicable if only pos
-		if self.write_off_account and flt(self.write_off_amount, self.precision("write_off_amount")):
+		if (
+			self.is_pos
+			and self.write_off_account
+			and flt(self.write_off_amount, self.precision("write_off_amount"))
+		):
 			write_off_account_currency = get_account_currency(self.write_off_account)
 			default_cost_center = frappe.get_cached_value("Company", self.company, "cost_center")
 
@@ -2067,6 +2071,8 @@ def make_inter_company_transaction(doctype, source_name, target_doc=None):
 		if source.doctype == "Purchase Order Item" and target.doctype == "Sales Order Item":
 			target.purchase_order = source.parent
 			target.purchase_order_item = source.name
+			target.material_request = source.material_request
+			target.material_request_item = source.material_request_item
 
 		if (
 			source.get("purchase_order")
@@ -2306,7 +2312,7 @@ def get_loyalty_programs(customer):
 	lp_details = get_loyalty_programs(customer)
 
 	if len(lp_details) == 1:
-		frappe.db.set(customer, "loyalty_program", lp_details[0])
+		customer.db_set("loyalty_program", lp_details[0])
 		return lp_details
 	else:
 		return lp_details

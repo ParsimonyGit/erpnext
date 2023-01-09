@@ -89,6 +89,9 @@ class SubcontractingController(StockController):
 				if bom.item != item.item_code:
 					msg = f"Please select an valid BOM for Item {item.item_name}."
 					frappe.throw(_(msg))
+			else:
+				msg = f"Please select a BOM for Item {item.item_name}."
+				frappe.throw(_(msg))
 
 	def __get_data_before_save(self):
 		item_dict = {}
@@ -826,6 +829,9 @@ def make_rm_stock_entry(
 					order_doctype: {
 						"doctype": "Stock Entry",
 						"field_map": {
+							"supplier": "supplier",
+							"supplier_name": "supplier_name",
+							"supplier_address": "supplier_address",
 							"to_warehouse": "supplier_warehouse",
 						},
 						"field_no_map": [field_no_map],

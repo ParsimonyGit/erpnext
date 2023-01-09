@@ -41,6 +41,7 @@ class BuyingController(SubcontractingController):
 		self.validate_from_warehouse()
 		self.set_supplier_address()
 		self.validate_asset_return()
+		self.validate_auto_repeat_subscription_dates()
 
 		if self.doctype == "Purchase Invoice":
 			self.validate_purchase_receipt_if_update_stock()
@@ -321,17 +322,18 @@ class BuyingController(SubcontractingController):
 					)
 
 				if self.is_internal_transfer():
-					if rate != d.rate:
-						d.rate = rate
-						frappe.msgprint(
-							_(
-								"Row {0}: Item rate has been updated as per valuation rate since its an internal stock transfer"
-							).format(d.idx),
-							alert=1,
-						)
-					d.discount_percentage = 0.0
-					d.discount_amount = 0.0
-					d.margin_rate_or_amount = 0.0
+					if self.doctype == "Purchase Receipt" or self.get("update_stock"):
+						if rate != d.rate:
+							d.rate = rate
+							frappe.msgprint(
+								_(
+									"Row {0}: Item rate has been updated as per valuation rate since its an internal stock transfer"
+								).format(d.idx),
+								alert=1,
+							)
+						d.discount_percentage = 0.0
+						d.discount_amount = 0.0
+						d.margin_rate_or_amount = 0.0
 
 	def validate_for_subcontracting(self):
 		if self.is_subcontracted and self.get("is_old_subcontracting_flow"):
