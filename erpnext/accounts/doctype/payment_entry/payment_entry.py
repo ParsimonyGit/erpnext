@@ -92,7 +92,13 @@ class PaymentEntry(AccountsController):
 		self.set_status()
 
 	def on_cancel(self):
-		self.ignore_linked_doctypes = ("GL Entry", "Stock Ledger Entry", "Payment Ledger Entry")
+		self.ignore_linked_doctypes = (
+			"GL Entry",
+			"Stock Ledger Entry",
+			"Payment Ledger Entry",
+			"Repost Payment Ledger",
+			"Repost Payment Ledger Items",
+		)
 		self.make_gl_entries(cancel=1)
 		self.update_outstanding_amounts()
 		self.update_advance_paid()
@@ -247,7 +253,7 @@ class PaymentEntry(AccountsController):
 		self.set_target_exchange_rate(ref_doc)
 
 	def set_source_exchange_rate(self, ref_doc=None):
-		if self.paid_from and not self.source_exchange_rate:
+		if self.paid_from:
 			if self.paid_from_account_currency == self.company_currency:
 				self.source_exchange_rate = 1
 			else:
@@ -622,7 +628,7 @@ class PaymentEntry(AccountsController):
 				self.payment_type == "Receive"
 				and self.base_total_allocated_amount < self.base_received_amount + total_deductions
 				and self.total_allocated_amount
-				< self.paid_amount + (total_deductions / self.source_exchange_rate)
+				< flt(self.paid_amount) + (total_deductions / self.source_exchange_rate)
 			):
 				self.unallocated_amount = (
 					self.base_received_amount + total_deductions - self.base_total_allocated_amount
@@ -632,7 +638,7 @@ class PaymentEntry(AccountsController):
 				self.payment_type == "Pay"
 				and self.base_total_allocated_amount < (self.base_paid_amount - total_deductions)
 				and self.total_allocated_amount
-				< self.received_amount + (total_deductions / self.target_exchange_rate)
+				< flt(self.received_amount) + (total_deductions / self.target_exchange_rate)
 			):
 				self.unallocated_amount = (
 					self.base_paid_amount - (total_deductions + self.base_total_allocated_amount)

@@ -39,7 +39,7 @@ def validate_columns(data):
 
 	no_of_columns = max([len(d) for d in data])
 
-	if no_of_columns > 7:
+	if no_of_columns > 8:
 		frappe.throw(
 			_(
 				"More columns found than expected. Please compare the uploaded file with standard template"
@@ -243,7 +243,7 @@ def build_forest(data):
 			is_group,
 			account_type,
 			root_type,
-			*others,
+			account_currency,
 		) = row
 
 		if not account_name:
@@ -262,8 +262,8 @@ def build_forest(data):
 			charts_map[account_name]["root_type"] = root_type
 		if account_number:
 			charts_map[account_name]["account_number"] = account_number
-		if others and others[0]:  # currency
-			charts_map[account_name]["account_currency"] = others[0]
+		if account_currency:
+			charts_map[account_name]["account_currency"] = account_currency
 
 		# create a list of paths
 		path = return_parent(data, account_name)
@@ -329,7 +329,7 @@ def get_template(template_type):
 		"Is Group",
 		"Account Type",
 		"Root Type",
-		"Currency",
+		"Account Currency",
 	]
 	writer = UnicodeWriter()
 	writer.writerow(fields)

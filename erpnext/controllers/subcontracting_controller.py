@@ -74,24 +74,25 @@ class SubcontractingController(StockController):
 			)
 
 			if not is_stock_item:
-				msg = f"Item {item.item_name} must be a stock item."
-				frappe.throw(_(msg))
+				frappe.throw(_("Row {0}: Item {1} must be a stock item.").format(item.idx, item.item_name))
 
 			if not is_sub_contracted_item:
-				msg = f"Item {item.item_name} must be a subcontracted item."
-				frappe.throw(_(msg))
+				frappe.throw(
+					_("Row {0}: Item {1} must be a subcontracted item.").format(item.idx, item.item_name)
+				)
 
 			if item.bom:
 				bom = frappe.get_doc("BOM", item.bom)
 				if not bom.is_active:
-					msg = f"Please select an active BOM for Item {item.item_name}."
-					frappe.throw(_(msg))
+					frappe.throw(
+						_("Row {0}: Please select an active BOM for Item {1}.").format(item.idx, item.item_name)
+					)
 				if bom.item != item.item_code:
-					msg = f"Please select an valid BOM for Item {item.item_name}."
-					frappe.throw(_(msg))
+					frappe.throw(
+						_("Row {0}: Please select an valid BOM for Item {1}.").format(item.idx, item.item_name)
+					)
 			else:
-				msg = f"Please select a BOM for Item {item.item_name}."
-				frappe.throw(_(msg))
+				frappe.throw(_("Row {0}: Please select a BOM for Item {1}.").format(item.idx, item.item_name))
 
 	def __get_data_before_save(self):
 		item_dict = {}
@@ -408,7 +409,14 @@ class SubcontractingController(StockController):
 		if self.available_materials.get(key) and self.available_materials[key]["batch_no"]:
 			new_rm_obj = None
 			for batch_no, batch_qty in self.available_materials[key]["batch_no"].items():
-				if batch_qty >= qty:
+				if batch_qty >= qty or (
+					rm_obj.consumed_qty == 0
+					and self.backflush_based_on == "BOM"
+					and len(self.available_materials[key]["batch_no"]) == 1
+				):
+					if rm_obj.consumed_qty == 0:
+						self.__set_consumed_qty(rm_obj, qty)
+
 					self.__set_batch_no_as_per_qty(item_row, rm_obj, batch_no, qty)
 					self.available_materials[key]["batch_no"][batch_no] -= qty
 					return
