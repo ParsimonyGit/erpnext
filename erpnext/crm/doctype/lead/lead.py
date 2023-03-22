@@ -414,9 +414,3 @@ def get_lead_with_phone_number(number):
 	lead = leads[0].name if leads else None
 
 	return lead
-
-
-def daily_open_lead():
-	leads = frappe.get_all("Lead", filters=[["contact_date", "Between", [nowdate(), nowdate()]]])
-	for lead in leads:
-		frappe.db.set_value("Lead", lead.name, "status", "Open")
