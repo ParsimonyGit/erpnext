@@ -1050,7 +1050,7 @@ class update_entries_after(object):
 			frappe.db.set_value("Bin", bin_name, updated_values, update_modified=True)
 
 
-def get_previous_sle_of_current_voucher(args, exclude_current_voucher=False):
+def get_previous_sle_of_current_voucher(args, operator="<", exclude_current_voucher=False):
 	"""get stock ledger entries filtered by specific posting datetime conditions"""
 
 	args["time_format"] = "%H:%i:%s"
@@ -1076,13 +1076,13 @@ def get_previous_sle_of_current_voucher(args, exclude_current_voucher=False):
 				posting_date < %(posting_date)s or
 				(
 					posting_date = %(posting_date)s and
-					time_format(posting_time, %(time_format)s) < time_format(%(posting_time)s, %(time_format)s)
+					time_format(posting_time, %(time_format)s) {operator} time_format(%(posting_time)s, %(time_format)s)
 				)
 			)
 		order by timestamp(posting_date, posting_time) desc, creation desc
 		limit 1
 		for update""".format(
-			voucher_condition=voucher_condition
+			operator=operator, voucher_condition=voucher_condition
 		),
 		args,
 		as_dict=1,
@@ -1179,7 +1179,7 @@ def get_stock_ledger_entries(
 def get_sle_by_voucher_detail_no(voucher_detail_no, excluded_sle=None):
 	return frappe.db.get_value(
 		"Stock Ledger Entry",
-		{"voucher_detail_no": voucher_detail_no, "name": ["!=", excluded_sle]},
+		{"voucher_detail_no": voucher_detail_no, "name": ["!=", excluded_sle], "is_cancelled": 0},
 		[
 			"item_code",
 			"warehouse",
@@ -1270,20 +1270,6 @@ def get_valuation_rate(
 			(item_code, warehouse, voucher_no, voucher_type),
 		)
 
-	if not last_valuation_rate:
-		# Get valuation rate from last sle for the item against any warehouse
-		last_valuation_rate = frappe.db.sql(
-			"""select valuation_rate
-			from `tabStock Ledger Entry` force index (item_code)
-			where
-				item_code = %s
-				AND valuation_rate > 0
-				AND is_cancelled = 0
-				AND NOT(voucher_no = %s AND voucher_type = %s)
-			order by posting_date desc, posting_time desc, name desc limit 1""",
-			(item_code, voucher_no, voucher_type),
-		)
-
 	if last_valuation_rate:
 		return flt(last_valuation_rate[0][0])
 
@@ -1351,6 +1337,9 @@ def update_qty_in_future_sle(args, allow_negative_stock=False):
 	next_stock_reco_detail = get_next_stock_reco(args)
 	if next_stock_reco_detail:
 		detail = next_stock_reco_detail[0]
+		if detail.batch_no:
+			regenerate_sle_for_batch_stock_reco(detail)
+
 		# add condition to update SLEs before this date & time
 		datetime_limit_condition = get_datetime_limit_condition(detail)
 
@@ -1378,6 +1367,16 @@ def update_qty_in_future_sle(args, allow_negative_stock=False):
 	validate_negative_qty_in_future_sle(args, allow_negative_stock)
 
 
+def regenerate_sle_for_batch_stock_reco(detail):
+	doc = frappe.get_cached_doc("Stock Reconciliation", detail.voucher_no)
+	doc.docstatus = 2
+	doc.update_stock_ledger()
+
+	doc.recalculate_current_qty(detail.item_code, detail.batch_no)
+	doc.docstatus = 1
+	doc.update_stock_ledger()
+
+
 def get_stock_reco_qty_shift(args):
 	stock_reco_qty_shift = 0
 	if args.get("is_cancelled"):
@@ -1389,7 +1388,7 @@ def get_stock_reco_qty_shift(args):
 			stock_reco_qty_shift = flt(args.actual_qty)
 	else:
 		# reco is being submitted
-		last_balance = get_previous_sle_of_current_voucher(args, exclude_current_voucher=True).get(
+		last_balance = get_previous_sle_of_current_voucher(args, "<=", exclude_current_voucher=True).get(
 			"qty_after_transaction"
 		)
 
@@ -1407,7 +1406,7 @@ def get_next_stock_reco(args):
 	return frappe.db.sql(
 		"""
 		select
-			name, posting_date, posting_time, creation, voucher_no
+			name, posting_date, posting_time, creation, voucher_no, item_code, batch_no, actual_qty
 		from
 			`tabStock Ledger Entry`
 		where

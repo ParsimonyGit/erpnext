@@ -116,6 +116,7 @@ class StockEntry(StockController):
 		self.validate_warehouse()
 		self.validate_work_order()
 		self.validate_bom()
+		self.set_process_loss_qty()
 		self.validate_purchase_order()
 		self.validate_subcontracting_order()
 
@@ -126,7 +127,7 @@ class StockEntry(StockController):
 		self.validate_with_material_request()
 		self.validate_batch()
 		self.validate_inspection()
-		# self.validate_fg_completed_qty()
+		self.validate_fg_completed_qty()
 		self.validate_difference_account()
 		self.set_job_card_data()
 		self.set_purpose_for_stock_entry()
@@ -160,6 +161,7 @@ class StockEntry(StockController):
 		self.validate_subcontract_order()
 		self.update_subcontract_order_supplied_items()
 		self.update_subcontracting_order_status()
+		self.update_pick_list_status()
 
 		self.make_gl_entries()
 
@@ -388,11 +390,20 @@ class StockEntry(StockController):
 		item_wise_qty = {}
 		if self.purpose == "Manufacture" and self.work_order:
 			for d in self.items:
-				if d.is_finished_item or d.is_process_loss:
+				if d.is_finished_item:
 					item_wise_qty.setdefault(d.item_code, []).append(d.qty)
 
+		precision = frappe.get_precision("Stock Entry Detail", "qty")
 		for item_code, qty_list in item_wise_qty.items():
-			total = flt(sum(qty_list), frappe.get_precision("Stock Entry Detail", "qty"))
+			total = flt(sum(qty_list), precision)
+
+			if (self.fg_completed_qty - total) > 0:
+				self.process_loss_qty = flt(self.fg_completed_qty - total, precision)
+				self.process_loss_percentage = flt(self.process_loss_qty * 100 / self.fg_completed_qty)
+
+			if self.process_loss_qty:
+				total += flt(self.process_loss_qty, precision)
+
 			if self.fg_completed_qty != total:
 				frappe.throw(
 					_("The finished product {0} quantity {1} and For Quantity {2} cannot be different").format(
@@ -471,7 +482,7 @@ class StockEntry(StockController):
 
 			if self.purpose == "Manufacture":
 				if validate_for_manufacture:
-					if d.is_finished_item or d.is_scrap_item or d.is_process_loss:
+					if d.is_finished_item or d.is_scrap_item:
 						d.s_warehouse = None
 						if not d.t_warehouse:
 							frappe.throw(_("Target warehouse is mandatory for row {0}").format(d.idx))
@@ -648,10 +659,9 @@ class StockEntry(StockController):
 		outgoing_items_cost = self.set_rate_for_outgoing_items(
 			reset_outgoing_rate, raise_error_if_no_rate
 		)
-		finished_item_qty = sum(
-			d.transfer_qty for d in self.items if d.is_finished_item or d.is_process_loss
-		)
+		finished_item_qty = sum(d.transfer_qty for d in self.items if d.is_finished_item)
 
+		items = []
 		# Set basic rate for incoming items
 		for d in self.get("items"):
 			if d.s_warehouse or d.set_basic_rate_manually:
@@ -659,12 +669,7 @@ class StockEntry(StockController):
 
 			if d.allow_zero_valuation_rate:
 				d.basic_rate = 0.0
-				frappe.msgprint(
-					_(
-						"Row {0}: Item rate has been updated to zero as Allow Zero Valuation Rate is checked for item {1}"
-					).format(d.idx, d.item_code),
-					alert=1,
-				)
+				items.append(d.item_code)
 
 			elif d.is_finished_item:
 				if self.purpose == "Manufacture":
@@ -689,9 +694,21 @@ class StockEntry(StockController):
 
 			# do not round off basic rate to avoid precision loss
 			d.basic_rate = flt(d.basic_rate)
-			if d.is_process_loss:
-				d.basic_rate = flt(0.0)
 			d.basic_amount = flt(flt(d.transfer_qty) * flt(d.basic_rate), d.precision("basic_amount"))
+
+		if items:
+			message = ""
+
+			if len(items) > 1:
+				message = _(
+					"Items rate has been updated to zero as Allow Zero Valuation Rate is checked for the following items: {0}"
+				).format(", ".join(frappe.bold(item) for item in items))
+			else:
+				message = _(
+					"Item rate has been updated to zero as Allow Zero Valuation Rate is checked for item {0}"
+				).format(frappe.bold(items[0]))
+
+			frappe.msgprint(message, alert=True)
 
 	def set_rate_for_outgoing_items(self, reset_outgoing_rate=True, raise_error_if_no_rate=True):
 		outgoing_items_cost = 0.0
@@ -992,7 +1009,9 @@ class StockEntry(StockController):
 				)
 
 	def mark_finished_and_scrap_items(self):
-		if any([d.item_code for d in self.items if (d.is_finished_item and d.t_warehouse)]):
+		if self.purpose != "Repack" and any(
+			[d.item_code for d in self.items if (d.is_finished_item and d.t_warehouse)]
+		):
 			return
 
 		finished_item = self.get_finished_item()
@@ -1241,7 +1260,6 @@ class StockEntry(StockController):
 		if self.work_order:
 			pro_doc = frappe.get_doc("Work Order", self.work_order)
 			_validate_work_order(pro_doc)
-			pro_doc.run_method("update_status")
 
 			if self.fg_completed_qty:
 				pro_doc.run_method("update_work_order_qty")
@@ -1249,6 +1267,7 @@ class StockEntry(StockController):
 					pro_doc.run_method("update_planned_qty")
 					pro_doc.update_batch_produced_qty(self)
 
+			pro_doc.run_method("update_status")
 			if not pro_doc.operations:
 				pro_doc.set_actual_dates()
 
@@ -1469,11 +1488,11 @@ class StockEntry(StockController):
 
 			# add finished goods item
 			if self.purpose in ("Manufacture", "Repack"):
+				self.set_process_loss_qty()
 				self.load_items_from_bom()
 
 		self.set_scrap_items()
 		self.set_actual_qty()
-		self.update_items_for_process_loss()
 		self.validate_customer_provided_item()
 		self.calculate_rate_and_amount(raise_error_if_no_rate=False)
 
@@ -1485,6 +1504,21 @@ class StockEntry(StockController):
 					item["to_warehouse"] = self.pro_doc.scrap_warehouse
 
 			self.add_to_stock_entry_detail(scrap_item_dict, bom_no=self.bom_no)
+
+	def set_process_loss_qty(self):
+		if self.purpose not in ("Manufacture", "Repack"):
+			return
+
+		self.process_loss_qty = 0.0
+		if not self.process_loss_percentage:
+			self.process_loss_percentage = frappe.get_cached_value(
+				"BOM", self.bom_no, "process_loss_percentage"
+			)
+
+		if self.process_loss_percentage:
+			self.process_loss_qty = flt(
+				(flt(self.fg_completed_qty) * flt(self.process_loss_percentage)) / 100
+			)
 
 	def set_work_order_details(self):
 		if not getattr(self, "pro_doc", None):
@@ -1518,7 +1552,7 @@ class StockEntry(StockController):
 		args = {
 			"to_warehouse": to_warehouse,
 			"from_warehouse": "",
-			"qty": self.fg_completed_qty,
+			"qty": flt(self.fg_completed_qty) - flt(self.process_loss_qty),
 			"item_name": item.item_name,
 			"description": item.description,
 			"stock_uom": item.stock_uom,
@@ -1966,7 +2000,6 @@ class StockEntry(StockController):
 			)
 			se_child.is_finished_item = item_row.get("is_finished_item", 0)
 			se_child.is_scrap_item = item_row.get("is_scrap_item", 0)
-			se_child.is_process_loss = item_row.get("is_process_loss", 0)
 			se_child.po_detail = item_row.get("po_detail")
 			se_child.sco_rm_detail = item_row.get("sco_rm_detail")
 
@@ -2213,31 +2246,6 @@ class StockEntry(StockController):
 				material_requests.append(material_request)
 				frappe.db.set_value("Material Request", material_request, "transfer_status", status)
 
-	def update_items_for_process_loss(self):
-		process_loss_dict = {}
-		for d in self.get("items"):
-			if not d.is_process_loss:
-				continue
-
-			scrap_warehouse = frappe.db.get_single_value(
-				"Manufacturing Settings", "default_scrap_warehouse"
-			)
-			if scrap_warehouse is not None:
-				d.t_warehouse = scrap_warehouse
-			d.is_scrap_item = 0
-
-			if d.item_code not in process_loss_dict:
-				process_loss_dict[d.item_code] = [flt(0), flt(0)]
-			process_loss_dict[d.item_code][0] += flt(d.transfer_qty)
-			process_loss_dict[d.item_code][1] += flt(d.qty)
-
-		for d in self.get("items"):
-			if not d.is_finished_item or d.item_code not in process_loss_dict:
-				continue
-			# Assumption: 1 finished item has 1 row.
-			d.transfer_qty -= process_loss_dict[d.item_code][0]
-			d.qty -= process_loss_dict[d.item_code][1]
-
 	def set_serial_no_batch_for_finished_good(self):
 		serial_nos = []
 		if self.pro_doc.serial_no:
@@ -2281,6 +2289,11 @@ class StockEntry(StockController):
 			)
 
 			update_subcontracting_order_status(self.subcontracting_order)
+
+	def update_pick_list_status(self):
+		from erpnext.stock.doctype.pick_list.pick_list import update_pick_list_status
+
+		update_pick_list_status(self.pick_list)
 
 	def set_missing_values(self):
 		"Updates rate and availability of all the items of mapped doc."
@@ -2494,7 +2507,7 @@ def get_uom_details(item_code, uom, qty):
 
 	if not conversion_factor:
 		frappe.msgprint(
-			_("UOM coversion factor required for UOM: {0} in Item: {1}").format(uom, item_code)
+			_("UOM conversion factor required for UOM: {0} in Item: {1}").format(uom, item_code)
 		)
 		ret = {"uom": ""}
 	else:

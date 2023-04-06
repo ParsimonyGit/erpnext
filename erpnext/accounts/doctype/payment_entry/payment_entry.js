@@ -7,7 +7,7 @@ cur_frm.cscript.tax_table = "Advance Taxes and Charges";
 
 frappe.ui.form.on('Payment Entry', {
 	onload: function(frm) {
-		frm.ignore_doctypes_on_cancel_all = ['Sales Invoice', 'Purchase Invoice'];
+		frm.ignore_doctypes_on_cancel_all = ['Sales Invoice', 'Purchase Invoice', "Repost Payment Ledger"];
 
 		if(frm.doc.__islocal) {
 			if (!frm.doc.paid_from) frm.set_value("paid_from_account_currency", null);
@@ -244,8 +244,6 @@ frappe.ui.form.on('Payment Entry', {
 
 		frm.set_currency_labels(["total_amount", "outstanding_amount", "allocated_amount"],
 			party_account_currency, "references");
-
-		frm.set_currency_labels(["amount"], company_currency, "deductions");
 
 		cur_frm.set_df_property("source_exchange_rate", "description",
 			("1 " + frm.doc.paid_from_account_currency + " = [?] " + company_currency));

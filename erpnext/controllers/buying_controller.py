@@ -269,13 +269,19 @@ class BuyingController(SubcontractingController):
 					) / qty_in_stock_uom
 				else:
 					item.valuation_rate = (
-						item.base_net_amount + item.item_tax_amount + flt(item.landed_cost_voucher_amount)
+						item.base_net_amount
+						+ item.item_tax_amount
+						+ flt(item.landed_cost_voucher_amount)
+						+ flt(item.get("rate_difference_with_purchase_invoice"))
 					) / qty_in_stock_uom
 			else:
 				item.valuation_rate = 0.0
 
 	def set_incoming_rate(self):
 		if self.doctype not in ("Purchase Receipt", "Purchase Invoice", "Purchase Order"):
+			return
+
+		if not self.is_internal_transfer():
 			return
 
 		ref_doctype_map = {
@@ -548,7 +554,9 @@ class BuyingController(SubcontractingController):
 			self.process_fixed_asset()
 			self.update_fixed_asset(field)
 
-		if self.doctype in ["Purchase Order", "Purchase Receipt"]:
+		if self.doctype in ["Purchase Order", "Purchase Receipt"] and not frappe.db.get_single_value(
+			"Buying Settings", "disable_last_purchase_rate"
+		):
 			update_last_purchase_rate(self, is_submit=1)
 
 	def on_cancel(self):
@@ -557,7 +565,9 @@ class BuyingController(SubcontractingController):
 		if self.get("is_return"):
 			return
 
-		if self.doctype in ["Purchase Order", "Purchase Receipt"]:
+		if self.doctype in ["Purchase Order", "Purchase Receipt"] and not frappe.db.get_single_value(
+			"Buying Settings", "disable_last_purchase_rate"
+		):
 			update_last_purchase_rate(self, is_submit=0)
 
 		if self.doctype in ["Purchase Receipt", "Purchase Invoice"]:
@@ -709,6 +719,8 @@ class BuyingController(SubcontractingController):
 						asset.purchase_date = self.posting_date
 						asset.supplier = self.supplier
 					elif self.docstatus == 2:
+						if asset.docstatus == 2:
+							continue
 						if asset.docstatus == 0:
 							asset.set(field, None)
 							asset.supplier = None
