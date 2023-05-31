@@ -158,7 +158,7 @@
   "party_account_currency",
   "inter_company_order_reference",
   "is_old_subcontracting_flow",
-  "dashboard"
+  "connections_tab"
  ],
  "fields": [
   {
@@ -1172,7 +1172,6 @@
    "depends_on": "is_internal_supplier",
    "fieldname": "set_from_warehouse",
    "fieldtype": "Link",
-   "ignore_user_permissions": 1,
    "label": "Set From Warehouse",
    "options": "Warehouse"
   },
@@ -1185,12 +1184,6 @@
    "fieldname": "more_info_tab",
    "fieldtype": "Tab Break",
    "label": "More Info"
-  },
-  {
-   "fieldname": "dashboard",
-   "fieldtype": "Tab Break",
-   "label": "Dashboard",
-   "show_dashboard": 1
   },
   {
    "fieldname": "column_break_7",
@@ -1269,6 +1262,12 @@
    "label": "Shipping Address"
   },
   {
+   "fieldname": "connections_tab",
+   "fieldtype": "Tab Break",
+   "label": "Connections",
+   "show_dashboard": 1
+  },
+  {
    "default": "0",
    "depends_on": "eval: doc.supplier",
    "fieldname": "filter_items_by_supplier",
@@ -1280,7 +1279,7 @@
  "idx": 105,
  "is_submittable": 1,
  "links": [],
- "modified": "2023-05-07 20:18:09.196799",
+ "modified": "2023-05-24 11:16:41.195340",
  "modified_by": "Administrator",
  "module": "Buying",
  "name": "Purchase Order",
