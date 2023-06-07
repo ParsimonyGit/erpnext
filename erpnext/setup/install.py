@@ -27,10 +27,12 @@ def after_install():
 	create_default_success_action()
 	create_default_energy_point_rules()
 	create_incoterms()
+	create_default_role_profiles()
 	add_company_to_session_defaults()
 	add_standard_navbar_items()
 	add_app_name()
 	setup_log_settings()
+	hide_workspaces()
 	frappe.db.commit()
 
 
@@ -205,3 +207,21 @@ def setup_log_settings():
 	log_settings.append("logs_to_clear", {"ref_doctype": "Repost Item Valuation", "days": 60})
 
 	log_settings.save(ignore_permissions=True)
+
+
+def hide_workspaces():
+	for ws in ["Integration", "Settings"]:
+		frappe.db.set_value("Workspace", ws, "public", 0)
+
+
+def create_default_role_profiles():
+	for module in ["Accounts", "Stock", "Manufacturing"]:
+		create_role_profile(module)
+
+
+def create_role_profile(module):
+	role_profile = frappe.new_doc("Role Profile")
+	role_profile.role_profile = _("{0} User").format(module)
+	role_profile.append("roles", {"role": module + " User"})
+	role_profile.append("roles", {"role": module + " Manager"})
+	role_profile.insert()
