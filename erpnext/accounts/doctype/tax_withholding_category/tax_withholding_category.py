@@ -5,7 +5,7 @@
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import cint, getdate
+from frappe.utils import cint, flt, getdate
 
 
 class TaxWithholdingCategory(Document):
@@ -215,7 +215,7 @@ def get_tax_row_for_tds(tax_details, tax_amount):
 	}
 
 
-def get_lower_deduction_certificate(tax_details, pan_no):
+def get_lower_deduction_certificate(company, tax_details, pan_no):
 	ldc_name = frappe.db.get_value(
 		"Lower Deduction Certificate",
 		{
@@ -223,6 +223,7 @@ def get_lower_deduction_certificate(tax_details, pan_no):
 			"tax_withholding_category": tax_details.tax_withholding_category,
 			"valid_from": (">=", tax_details.from_date),
 			"valid_upto": ("<=", tax_details.to_date),
+			"company": company,
 		},
 		"name",
 	)
@@ -255,7 +256,7 @@ def get_tax_amount(party_type, parties, inv, tax_details, posting_date, pan_no=N
 	tax_amount = 0
 
 	if party_type == "Supplier":
-		ldc = get_lower_deduction_certificate(tax_details, pan_no)
+		ldc = get_lower_deduction_certificate(inv.company, tax_details, pan_no)
 		if tax_deducted:
 			net_total = inv.tax_withholding_net_total
 			if ldc:
@@ -301,7 +302,7 @@ def get_invoice_vouchers(parties, tax_details, company, party_type="Supplier"):
 		"docstatus": 1,
 	}
 
-	if not tax_details.get("consider_party_ledger_amount") and doctype != "Sales Invoice":
+	if doctype != "Sales Invoice":
 		filters.update(
 			{"apply_tds": 1, "tax_withholding_category": tax_details.get("tax_withholding_category")}
 		)
@@ -568,7 +569,12 @@ def get_tds_amount_from_ldc(ldc, parties, tax_details, posting_date, net_total):
 	tds_amount = 0
 	limit_consumed = frappe.db.get_value(
 		"Purchase Invoice",
-		{"supplier": ("in", parties), "apply_tds": 1, "docstatus": 1},
+		{
+			"supplier": ("in", parties),
+			"apply_tds": 1,
+			"docstatus": 1,
+			"posting_date": ("between", (ldc.valid_from, ldc.valid_upto)),
+		},
 		"sum(tax_withholding_net_total)",
 	)
 
@@ -583,10 +589,10 @@ def get_tds_amount_from_ldc(ldc, parties, tax_details, posting_date, net_total):
 
 
 def get_ltds_amount(current_amount, deducted_amount, certificate_limit, rate, tax_details):
-	if current_amount < (certificate_limit - deducted_amount):
+	if certificate_limit - flt(deducted_amount) - flt(current_amount) >= 0:
 		return current_amount * rate / 100
 	else:
-		ltds_amount = certificate_limit - deducted_amount
+		ltds_amount = certificate_limit - flt(deducted_amount)
 		tds_amount = current_amount - ltds_amount
 
 		return ltds_amount * rate / 100 + tds_amount * tax_details.rate / 100
@@ -597,9 +603,9 @@ def is_valid_certificate(
 ):
 	valid = False
 
-	if (
-		getdate(valid_from) <= getdate(posting_date) <= getdate(valid_upto)
-	) and certificate_limit > deducted_amount:
+	available_amount = flt(certificate_limit) - flt(deducted_amount) - flt(current_amount)
+
+	if (getdate(valid_from) <= getdate(posting_date) <= getdate(valid_upto)) and available_amount > 0:
 		valid = True
 
 	return valid

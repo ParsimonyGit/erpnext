@@ -29,6 +29,7 @@ class PickList(Document):
 		self.validate_for_qty()
 
 	def before_save(self):
+		self.update_status()
 		self.set_item_locations()
 
 		# set percentage picked in SO
@@ -89,20 +90,20 @@ class PickList(Document):
 		self.update_reference_qty()
 		self.update_sales_order_picking_status()
 
-	def update_status(self, status=None, update_modified=True):
+	def update_status(self, status=None):
 		if not status:
 			if self.docstatus == 0:
 				status = "Draft"
 			elif self.docstatus == 1:
-				if self.status == "Draft":
-					status = "Open"
-				elif target_document_exists(self.name, self.purpose):
+				if target_document_exists(self.name, self.purpose):
 					status = "Completed"
+				else:
+					status = "Open"
 			elif self.docstatus == 2:
 				status = "Cancelled"
 
 		if status:
-			frappe.db.set_value("Pick List", self.name, "status", status, update_modified=update_modified)
+			self.db_set("status", status)
 
 	def update_reference_qty(self):
 		packed_items = []
@@ -172,8 +173,8 @@ class PickList(Document):
 			if (row.picked_qty / row.stock_qty) * 100 > over_delivery_receipt_allowance:
 				frappe.throw(
 					_(
-						f"You are picking more than required quantity for the item {row.item_code}. Check if there is any other pick list created for the sales order {row.sales_order}."
-					)
+						"You are picking more than required quantity for the item {0}. Check if there is any other pick list created for the sales order {1}."
+					).format(row.item_code, row.sales_order)
 				)
 
 	@frappe.whitelist()
@@ -264,6 +265,10 @@ class PickList(Document):
 		for item in locations:
 			if not item.item_code:
 				frappe.throw("Row #{0}: Item Code is Mandatory".format(item.idx))
+			if not cint(
+				frappe.get_cached_value("Item", item.item_code, "is_stock_item")
+			) and not frappe.db.exists("Product Bundle", {"new_item_code": item.item_code}):
+				continue
 			item_code = item.item_code
 			reference = item.sales_order_item or item.material_request_item
 			key = (item_code, item.uom, item.warehouse, item.batch_no, reference)
@@ -459,7 +464,7 @@ def get_items_with_location_and_quantity(item_doc, item_location_map, docstatus)
 		item_doc.qty if (docstatus == 1 and item_doc.stock_qty == 0) else item_doc.stock_qty
 	)
 
-	while remaining_stock_qty > 0 and available_locations:
+	while flt(remaining_stock_qty) > 0 and available_locations:
 		item_location = available_locations.pop(0)
 		item_location = frappe._dict(item_location)
 
