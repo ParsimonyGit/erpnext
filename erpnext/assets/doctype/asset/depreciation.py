@@ -343,6 +343,9 @@ def modify_depreciation_schedule_for_asset_repairs(asset):
 
 
 def reverse_depreciation_entry_made_after_disposal(asset, date):
+	if not asset.calculate_depreciation:
+		return
+
 	row = -1
 	finance_book = asset.get("schedules")[0].get("finance_book")
 	for schedule in asset.get("schedules"):
@@ -483,17 +486,21 @@ def get_gl_entries_on_asset_disposal(
 			},
 			item=asset,
 		),
-		asset.get_gl_dict(
-			{
-				"account": accumulated_depr_account,
-				"debit_in_account_currency": accumulated_depr_amount,
-				"debit": accumulated_depr_amount,
-				"cost_center": depreciation_cost_center,
-				"posting_date": date,
-			},
-			item=asset,
-		),
 	]
+
+	if accumulated_depr_amount:
+		gl_entries.append(
+			asset.get_gl_dict(
+				{
+					"account": accumulated_depr_account,
+					"debit_in_account_currency": accumulated_depr_amount,
+					"debit": accumulated_depr_amount,
+					"cost_center": depreciation_cost_center,
+					"posting_date": date,
+				},
+				item=asset,
+			),
+		)
 
 	profit_amount = flt(selling_amount) - flt(value_after_depreciation)
 	if profit_amount:
