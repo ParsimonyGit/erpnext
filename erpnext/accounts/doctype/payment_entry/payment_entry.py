@@ -194,7 +194,7 @@ class PaymentEntry(AccountsController):
 			# The reference has already been partly paid
 			elif (
 				latest.outstanding_amount < latest.invoice_amount
-				and d.outstanding_amount != latest.outstanding_amount
+				and flt(d.outstanding_amount, d.precision("outstanding_amount")) != latest.outstanding_amount
 			):
 				frappe.throw(
 					_(
@@ -1735,7 +1735,7 @@ def get_reference_details(reference_doctype, reference_name, party_account_curre
 		if not total_amount:
 			if party_account_currency == company_currency:
 				# for handling cases that don't have multi-currency (base field)
-				total_amount = ref_doc.get("grand_total") or ref_doc.get("base_grand_total")
+				total_amount = ref_doc.get("base_grand_total") or ref_doc.get("grand_total")
 				exchange_rate = 1
 			else:
 				total_amount = ref_doc.get("grand_total")
