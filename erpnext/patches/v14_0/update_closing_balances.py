@@ -50,6 +50,7 @@ def execute():
 							"voucher_no": ["!=", pcv.name],
 							"posting_date": ["between", [pcv_doc.year_start_date, pcv.posting_date]],
 							"is_opening": "No",
+							"company": company,
 						},
 						fields=["*"],
 					)
@@ -58,7 +59,7 @@ def execute():
 					# add opening entries only for the first pcv
 					closing_entries += frappe.db.get_all(
 						"GL Entry",
-						filters={"is_cancelled": 0, "is_opening": "Yes"},
+						filters={"is_cancelled": 0, "is_opening": "Yes", "company": company},
 						fields=["*"],
 					)
 
@@ -68,7 +69,6 @@ def execute():
 
 				entries = gl_entries + closing_entries
 
-				if entries:
-					make_closing_entries(entries, voucher_name=pcv.name)
-					i += 1
-					company_wise_order[pcv.company].append(pcv.posting_date)
+				make_closing_entries(entries, pcv.name, pcv.company, pcv.posting_date)
+				company_wise_order[pcv.company].append(pcv.posting_date)
+				i += 1
