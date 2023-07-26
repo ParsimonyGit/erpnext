@@ -75,7 +75,6 @@ webform_list_context = "erpnext.controllers.website_list_for_contact.get_webform
 calendars = [
 	"Task",
 	"Work Order",
-	"Leave Application",
 	"Sales Order",
 	"Holiday List",
 ]
@@ -279,9 +278,33 @@ standard_queries = {
 	"Customer": "erpnext.controllers.queries.customer_query",
 }
 
+period_closing_doctypes = [
+	"Sales Invoice",
+	"Purchase Invoice",
+	"Journal Entry",
+	"Bank Clearance",
+	"Stock Entry",
+	"Dunning",
+	"Invoice Discounting",
+	"Payment Entry",
+	"Period Closing Voucher",
+	"Process Deferred Accounting",
+	"Asset",
+	"Asset Capitalization",
+	"Asset Repair",
+	"Delivery Note",
+	"Landed Cost Voucher",
+	"Purchase Receipt",
+	"Stock Reconciliation",
+	"Subcontracting Receipt",
+]
+
 doc_events = {
 	"*": {
 		"validate": "erpnext.support.doctype.service_level_agreement.service_level_agreement.apply",
+	},
+	tuple(period_closing_doctypes): {
+		"validate": "erpnext.accounts.doctype.accounting_period.accounting_period.validate_accounting_period_on_doc_save",
 	},
 	"Stock Entry": {
 		"on_submit": "erpnext.stock.doctype.material_request.material_request.update_completed_and_requested_qty",
@@ -359,6 +382,11 @@ doc_events = {
 	},
 }
 
+# function should expect the variable and doc as arguments
+naming_series_variables = {
+	"FY": "erpnext.accounts.utils.parse_naming_series_variable",
+}
+
 # On cancel event Payment Entry will be exempted and all linked submittable doctype will get cancelled.
 # to maintain data integrity we exempted payment entry. it will un-link when sales invoice get cancelled.
 # if payment entry not in auto cancel exempted doctypes it will cancel payment entry.
@@ -420,6 +448,10 @@ scheduler_events = {
 		"erpnext.selling.doctype.quotation.quotation.set_expired_status",
 		"erpnext.buying.doctype.supplier_quotation.supplier_quotation.set_expired_status",
 		"erpnext.accounts.doctype.process_statement_of_accounts.process_statement_of_accounts.send_auto_email",
+		"erpnext.accounts.utils.auto_create_exchange_rate_revaluation_daily",
+	],
+	"weekly": [
+		"erpnext.accounts.utils.auto_create_exchange_rate_revaluation_weekly",
 	],
 	"daily_long": [
 		"erpnext.setup.doctype.email_digest.email_digest.send",
@@ -462,15 +494,6 @@ communication_doctypes = ["Customer", "Supplier"]
 advance_payment_doctypes = ["Sales Order", "Purchase Order"]
 
 invoice_doctypes = ["Sales Invoice", "Purchase Invoice"]
-
-period_closing_doctypes = [
-	"Sales Invoice",
-	"Purchase Invoice",
-	"Journal Entry",
-	"Bank Clearance",
-	"Asset",
-	"Stock Entry",
-]
 
 bank_reconciliation_doctypes = [
 	"Payment Entry",
@@ -523,6 +546,7 @@ accounting_dimension_doctypes = [
 	"Subcontracting Order Item",
 	"Subcontracting Receipt",
 	"Subcontracting Receipt Item",
+	"Account Closing Balance",
 ]
 
 # get matching queries for Bank Reconciliation
@@ -607,3 +631,8 @@ global_search_doctypes = {
 additional_timeline_content = {
 	"*": ["erpnext.telephony.doctype.call_log.call_log.get_linked_call_logs"]
 }
+
+
+extend_bootinfo = [
+	"erpnext.support.doctype.service_level_agreement.service_level_agreement.add_sla_doctypes",
+]

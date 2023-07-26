@@ -512,7 +512,8 @@ class update_entries_after(object):
 
 	def update_distinct_item_warehouses(self, dependant_sle):
 		key = (dependant_sle.item_code, dependant_sle.warehouse)
-		val = frappe._dict({"sle": dependant_sle})
+		val = frappe._dict({"sle": dependant_sle, "dependent_voucher_detail_nos": []})
+
 		if key not in self.distinct_item_warehouses:
 			self.distinct_item_warehouses[key] = val
 			self.new_items_found = True
@@ -520,10 +521,26 @@ class update_entries_after(object):
 			existing_sle_posting_date = (
 				self.distinct_item_warehouses[key].get("sle", {}).get("posting_date")
 			)
+
+			dependent_voucher_detail_nos = self.get_dependent_voucher_detail_nos(key)
+
 			if getdate(dependant_sle.posting_date) < getdate(existing_sle_posting_date):
 				val.sle_changed = True
 				self.distinct_item_warehouses[key] = val
 				self.new_items_found = True
+			elif dependant_sle.voucher_detail_no not in set(dependent_voucher_detail_nos):
+				# Future dependent voucher needs to be repost to get the correct stock value
+				# If dependent voucher has not reposted, then add it to the list
+				dependent_voucher_detail_nos.append(dependant_sle.voucher_detail_no)
+				self.new_items_found = True
+				val.dependent_voucher_detail_nos = dependent_voucher_detail_nos
+				self.distinct_item_warehouses[key] = val
+
+	def get_dependent_voucher_detail_nos(self, key):
+		if "dependent_voucher_detail_nos" not in self.distinct_item_warehouses[key]:
+			self.distinct_item_warehouses[key].dependent_voucher_detail_nos = []
+
+		return self.distinct_item_warehouses[key].dependent_voucher_detail_nos
 
 	def process_sle(self, sle):
 		from erpnext.stock.doctype.serial_no.serial_no import get_serial_nos
@@ -562,7 +579,7 @@ class update_entries_after(object):
 		if get_serial_nos(sle.serial_no):
 			self.get_serialized_values(sle)
 			self.wh_data.qty_after_transaction += flt(sle.actual_qty)
-			if sle.voucher_type == "Stock Reconciliation":
+			if sle.voucher_type == "Stock Reconciliation" and not sle.batch_no:
 				self.wh_data.qty_after_transaction = sle.qty_after_transaction
 
 			self.wh_data.stock_value = flt(self.wh_data.qty_after_transaction) * flt(
@@ -821,6 +838,7 @@ class update_entries_after(object):
 				item.current_amount = flt(item.current_qty) * flt(item.current_valuation_rate)
 
 				item.amount = flt(item.qty) * flt(item.valuation_rate)
+				item.quantity_difference = item.qty - item.current_qty
 				item.amount_difference = item.amount - item.current_amount
 			else:
 				sr.difference_amount = sum([item.amount_difference for item in sr.items])
@@ -1254,8 +1272,11 @@ def get_sle_by_voucher_detail_no(voucher_detail_no, excluded_sle=None):
 		[
 			"item_code",
 			"warehouse",
+			"actual_qty",
+			"qty_after_transaction",
 			"posting_date",
 			"posting_time",
+			"voucher_detail_no",
 			"timestamp(posting_date, posting_time) as timestamp",
 		],
 		as_dict=1,
