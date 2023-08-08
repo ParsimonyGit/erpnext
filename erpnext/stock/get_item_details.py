@@ -88,7 +88,14 @@ def get_item_details(args, doc=None, for_validate=False, overwrite_warehouse=Tru
 
 	update_party_blanket_order(args, out)
 
+	# Never try to find a customer price if customer is set in these Doctype
+	current_customer = args.customer
+	if args.get("doctype") in ["Purchase Order", "Purchase Receipt", "Purchase Invoice"]:
+		args.customer = None
+
 	out.update(get_price_list_rate(args, item))
+
+	args.customer = current_customer
 
 	if args.customer and cint(args.is_pos):
 		out.update(get_pos_profile_item_details(args.company, args, update_data=True))
@@ -146,7 +153,7 @@ def update_stock(args, out):
 	):
 
 		if out.has_batch_no and not args.get("batch_no"):
-			out.batch_no = get_batch_no(out.item_code, out.warehouse, out.qty)
+			out.batch_no = get_batch_no(out.item_code, out.warehouse, out.qty).get("batch_no", None)
 			actual_batch_qty = get_batch_qty(out.batch_no, out.warehouse, out.item_code)
 			if actual_batch_qty:
 				out.update(actual_batch_qty)
@@ -226,8 +233,10 @@ def validate_item_details(args, item):
 
 	validate_end_of_life(item.name, item.end_of_life, item.disabled)
 
-	if args.transaction_type == "selling" and cint(item.has_variants):
-		throw(_("Item {0} is a template, please select one of its variants").format(item.name))
+	if cint(item.has_variants):
+		msg = f"Item {item.name} is a template, please select one of its variants"
+
+		throw(_(msg), title=_("Template Item Selected"))
 
 	elif args.transaction_type == "buying" and args.doctype != "Material Request":
 		if args.get("is_subcontracted") == "Yes" and item.is_sub_contracted_item != 1:
@@ -597,7 +606,9 @@ def _get_item_tax_template(args, taxes, out=None, for_validate=False):
 				taxes_with_no_validity.append(tax)
 
 	if taxes_with_validity:
-		taxes = sorted(taxes_with_validity, key=lambda i: i.valid_from, reverse=True)
+		taxes = sorted(
+			taxes_with_validity, key=lambda i: i.valid_from or tax.maximum_net_rate, reverse=True
+		)
 	else:
 		taxes = taxes_with_no_validity
 

@@ -213,7 +213,8 @@
    "default": "0",
    "fieldname": "disabled",
    "fieldtype": "Check",
-   "label": "Disabled"
+   "label": "Disabled",
+   "search_index": 1
   },
   {
    "default": "0",
@@ -955,7 +956,8 @@
  "image_field": "image",
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2022-04-28 04:52:10.272256",
+ "make_attachments_public": 1,
+ "modified": "2023-07-14 17:18:18.658942",
  "modified_by": "Administrator",
  "module": "Stock",
  "name": "Item",

@@ -5,7 +5,7 @@
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import cint, getdate
+from frappe.utils import cint, flt, getdate
 
 
 class TaxWithholdingCategory(Document):
@@ -256,7 +256,7 @@ def get_tax_amount(party_type, parties, inv, tax_details, posting_date, pan_no=N
 			tax_amount = get_tcs_amount(parties, inv, tax_details, vouchers, advance_vouchers)
 
 	if cint(tax_details.round_off_tax_amount):
-		tax_amount = round(tax_amount)
+		tax_amount = normal_round(tax_amount)
 
 	return tax_amount, tax_deducted, tax_deducted_on_advances, voucher_wise_amount
 
@@ -274,7 +274,7 @@ def get_invoice_vouchers(parties, tax_details, company, party_type="Supplier"):
 		"docstatus": 1,
 	}
 
-	if not tax_details.get("consider_party_ledger_amount") and doctype != "Sales Invoice":
+	if doctype != "Sales Invoice":
 		filters.update(
 			{"apply_tds": 1, "tax_withholding_category": tax_details.get("tax_withholding_category")}
 		)
@@ -518,10 +518,19 @@ def get_invoice_total_without_tcs(inv, tax_details):
 
 def get_tds_amount_from_ldc(ldc, parties, pan_no, tax_details, posting_date, net_total):
 	tds_amount = 0
-	limit_consumed = frappe.db.get_value(
-		"Purchase Invoice",
-		{"supplier": ("in", parties), "apply_tds": 1, "docstatus": 1},
-		"sum(net_total)",
+
+	limit_consumed = flt(
+		frappe.db.get_all(
+			"Purchase Invoice",
+			filters={
+				"supplier": ("in", parties),
+				"apply_tds": 1,
+				"docstatus": 1,
+				"tax_withholding_category": ldc.tax_withholding_category,
+				"posting_date": ("between", (ldc.valid_from, ldc.valid_upto)),
+			},
+			fields=["sum(base_net_total) as limit_consumed"],
+		)[0].get("limit_consumed")
 	)
 
 	if is_valid_certificate(
@@ -535,10 +544,10 @@ def get_tds_amount_from_ldc(ldc, parties, pan_no, tax_details, posting_date, net
 
 
 def get_ltds_amount(current_amount, deducted_amount, certificate_limit, rate, tax_details):
-	if current_amount < (certificate_limit - deducted_amount):
+	if certificate_limit - flt(deducted_amount) - flt(current_amount) >= 0:
 		return current_amount * rate / 100
 	else:
-		ltds_amount = certificate_limit - deducted_amount
+		ltds_amount = certificate_limit - flt(deducted_amount)
 		tds_amount = current_amount - ltds_amount
 
 		return ltds_amount * rate / 100 + tds_amount * tax_details.rate / 100
@@ -549,9 +558,26 @@ def is_valid_certificate(
 ):
 	valid = False
 
-	if (
-		getdate(valid_from) <= getdate(posting_date) <= getdate(valid_upto)
-	) and certificate_limit > deducted_amount:
+	available_amount = flt(certificate_limit) - flt(deducted_amount)
+
+	if (getdate(valid_from) <= getdate(posting_date) <= getdate(valid_upto)) and available_amount > 0:
 		valid = True
 
 	return valid
+
+
+def normal_round(number):
+	"""
+	Rounds a number to the nearest integer.
+	:param number: The number to round.
+	"""
+	decimal_part = number - int(number)
+
+	if decimal_part >= 0.5:
+		decimal_part = 1
+	else:
+		decimal_part = 0
+
+	number = int(number) + decimal_part
+
+	return number

@@ -191,11 +191,15 @@ erpnext.buying.PurchaseOrderController = erpnext.buying.BuyingController.extend(
 						cur_frm.add_custom_button(__('Purchase Invoice'),
 							this.make_purchase_invoice, __('Create'));
 
-					if(flt(doc.per_billed)==0 && doc.status != "Delivered") {
-						cur_frm.add_custom_button(__('Payment'), cur_frm.cscript.make_payment_entry, __('Create'));
+					if(flt(doc.per_billed) < 100 && doc.status != "Delivered") {
+						this.frm.add_custom_button(
+							__('Payment'),
+							() => this.make_payment_entry(),
+							__('Create')
+						);
 					}
 
-					if(flt(doc.per_billed)==0) {
+					if(flt(doc.per_billed) < 100) {
 						this.frm.add_custom_button(__('Payment Request'),
 							function() { me.make_payment_request() }, __('Create'));
 					}
@@ -238,7 +242,7 @@ erpnext.buying.PurchaseOrderController = erpnext.buying.BuyingController.extend(
 			source_name: this.frm.doc.supplier,
 			target: this.frm,
 			setters: {
-				company: me.frm.doc.company
+				company: this.frm.doc.company
 			},
 			get_query_filters: {
 				docstatus: ["!=", 2],

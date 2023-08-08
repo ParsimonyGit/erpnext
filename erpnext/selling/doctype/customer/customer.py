@@ -275,18 +275,9 @@ class Customer(TransactionBase):
 
 	def on_trash(self):
 		if self.customer_primary_contact:
-			frappe.db.sql(
-				"""
-				UPDATE `tabCustomer`
-				SET
-					customer_primary_contact=null,
-					customer_primary_address=null,
-					mobile_no=null,
-					email_id=null,
-					primary_address=null
-				WHERE name=%(name)s""",
-				{"name": self.name},
-			)
+			self.db_set("customer_primary_contact", None)
+		if self.customer_primary_address:
+			self.db_set("customer_primary_address", None)
 
 		delete_contact_and_address("Customer", self.name)
 		if self.lead_name:
@@ -665,11 +656,15 @@ def get_credit_limit(customer, company):
 
 		if not credit_limit:
 			customer_group = frappe.get_cached_value("Customer", customer, "customer_group")
-			credit_limit = frappe.db.get_value(
+
+			result = frappe.db.get_values(
 				"Customer Credit Limit",
 				{"parent": customer_group, "parenttype": "Customer Group", "company": company},
-				"credit_limit",
+				fieldname=["credit_limit", "bypass_credit_limit_check"],
+				as_dict=True,
 			)
+			if result and not result[0].bypass_credit_limit_check:
+				credit_limit = result[0].credit_limit
 
 	if not credit_limit:
 		credit_limit = frappe.get_cached_value("Company", company, "credit_limit")

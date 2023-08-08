@@ -1,9 +1,10 @@
 # Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors and contributors
 # For license information, please see license.txt
-
+import collections
 
 import frappe
 from frappe import _
+from frappe.query_builder.functions import IfNull, Sum
 from frappe.utils import cint, flt, get_link_to_form, getdate, nowdate
 from six import iteritems
 
@@ -43,6 +44,7 @@ class POSInvoice(SalesInvoice):
 		self.validate_debit_to_acc()
 		self.validate_write_off_account()
 		self.validate_change_amount()
+		self.validate_duplicate_serial_and_batch_no()
 		self.validate_change_account()
 		self.validate_item_cost_centers()
 		self.validate_warehouse()
@@ -153,6 +155,27 @@ class POSInvoice(SalesInvoice):
 				title=_("Item Unavailable"),
 			)
 
+	def validate_duplicate_serial_and_batch_no(self):
+		serial_nos = []
+		batch_nos = []
+
+		for row in self.get("items"):
+			if row.serial_no:
+				serial_nos = row.serial_no.split("\n")
+
+			if row.batch_no and not row.serial_no:
+				batch_nos.append(row.batch_no)
+
+		if serial_nos:
+			for key, value in collections.Counter(serial_nos).items():
+				if value > 1:
+					frappe.throw(_("Duplicate Serial No {0} found").format("key"))
+
+		if batch_nos:
+			for key, value in collections.Counter(batch_nos).items():
+				if value > 1:
+					frappe.throw(_("Duplicate Batch No {0} found").format("key"))
+
 	def validate_pos_reserved_batch_qty(self, item):
 		filters = {"item_code": item.item_code, "warehouse": item.warehouse, "batch_no": item.batch_no}
 
@@ -161,7 +184,7 @@ class POSInvoice(SalesInvoice):
 
 		bold_item_name = frappe.bold(item.item_name)
 		bold_extra_batch_qty_needed = frappe.bold(
-			abs(available_batch_qty - reserved_batch_qty - item.qty)
+			abs(available_batch_qty - reserved_batch_qty - item.stock_qty)
 		)
 		bold_invalid_batch_no = frappe.bold(item.batch_no)
 
@@ -172,7 +195,7 @@ class POSInvoice(SalesInvoice):
 				).format(item.idx, bold_invalid_batch_no, bold_item_name),
 				title=_("Item Unavailable"),
 			)
-		elif (available_batch_qty - reserved_batch_qty - item.qty) < 0:
+		elif (available_batch_qty - reserved_batch_qty - item.stock_qty) < 0:
 			frappe.throw(
 				_(
 					"Row #{}: Batch No. {} of item {} has less than required stock available, {} more required"
@@ -246,7 +269,7 @@ class POSInvoice(SalesInvoice):
 						),
 						title=_("Item Unavailable"),
 					)
-				elif is_stock_item and flt(available_stock) < flt(d.qty):
+				elif is_stock_item and flt(available_stock) < flt(d.stock_qty):
 					frappe.throw(
 						_(
 							"Row #{}: Stock quantity not enough for Item Code: {} under warehouse {}. Available quantity {}."
@@ -652,7 +675,7 @@ def get_bundle_availability(bundle_item_code, warehouse):
 		item_pos_reserved_qty = get_pos_reserved_qty(item.item_code, warehouse)
 		available_qty = item_bin_qty - item_pos_reserved_qty
 
-		max_available_bundles = available_qty / item.qty
+		max_available_bundles = available_qty / item.stock_qty
 		if bundle_bin_qty > max_available_bundles and frappe.get_value(
 			"Item", item.item_code, "is_stock_item"
 		):
@@ -675,18 +698,22 @@ def get_bin_qty(item_code, warehouse):
 
 
 def get_pos_reserved_qty(item_code, warehouse):
-	reserved_qty = frappe.db.sql(
-		"""select sum(p_item.qty) as qty
-		from `tabPOS Invoice` p, `tabPOS Invoice Item` p_item
-		where p.name = p_item.parent
-		and ifnull(p.consolidated_invoice, '') = ''
-		and p_item.docstatus = 1
-		and p_item.item_code = %s
-		and p_item.warehouse = %s
-		""",
-		(item_code, warehouse),
-		as_dict=1,
-	)
+	p_inv = frappe.qb.DocType("POS Invoice")
+	p_item = frappe.qb.DocType("POS Invoice Item")
+
+	reserved_qty = (
+		frappe.qb.from_(p_inv)
+		.from_(p_item)
+		.select(Sum(p_item.qty).as_("qty"))
+		.where(
+			(p_inv.name == p_item.parent)
+			& (IfNull(p_inv.consolidated_invoice, "") == "")
+			& (p_inv.is_return == 0)
+			& (p_item.docstatus == 1)
+			& (p_item.item_code == item_code)
+			& (p_item.warehouse == warehouse)
+		)
+	).run(as_dict=True)
 
 	return reserved_qty[0].qty or 0 if reserved_qty else 0
 
@@ -747,7 +774,3 @@ def add_return_modes(doc, pos_profile):
 		]:
 			payment_mode = get_mode_of_payment_info(mode_of_payment, doc.company)
 			append_payment(payment_mode[0])
-
-
-def on_doctype_update():
-	frappe.db.add_index("POS Invoice", ["return_against"])

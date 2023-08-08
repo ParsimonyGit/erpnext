@@ -1117,6 +1117,46 @@ class TestSalesInvoice(unittest.TestCase):
 
 		frappe.db.sql("delete from `tabPOS Profile`")
 
+	def test_bin_details_of_packed_item(self):
+		from erpnext.selling.doctype.product_bundle.test_product_bundle import make_product_bundle
+		from erpnext.stock.doctype.item.test_item import make_item
+
+		# test Update Items with product bundle
+		if not frappe.db.exists("Item", "_Test Product Bundle Item New"):
+			bundle_item = make_item("_Test Product Bundle Item New", {"is_stock_item": 0})
+			bundle_item.append(
+				"item_defaults", {"company": "_Test Company", "default_warehouse": "_Test Warehouse - _TC"}
+			)
+			bundle_item.save(ignore_permissions=True)
+
+		make_item("_Packed Item New 1", {"is_stock_item": 1})
+		make_product_bundle("_Test Product Bundle Item New", ["_Packed Item New 1"], 2)
+
+		si = create_sales_invoice(
+			item_code="_Test Product Bundle Item New",
+			update_stock=1,
+			warehouse="_Test Warehouse - _TC",
+			transaction_date=add_days(nowdate(), -1),
+			do_not_submit=1,
+		)
+
+		make_stock_entry(item="_Packed Item New 1", target="_Test Warehouse - _TC", qty=120, rate=100)
+
+		bin_details = frappe.db.get_value(
+			"Bin",
+			{"item_code": "_Packed Item New 1", "warehouse": "_Test Warehouse - _TC"},
+			["actual_qty", "projected_qty", "ordered_qty"],
+			as_dict=1,
+		)
+
+		si.transaction_date = nowdate()
+		si.save()
+
+		packed_item = si.packed_items[0]
+		self.assertEqual(flt(bin_details.actual_qty), flt(packed_item.actual_qty))
+		self.assertEqual(flt(bin_details.projected_qty), flt(packed_item.projected_qty))
+		self.assertEqual(flt(bin_details.ordered_qty), flt(packed_item.ordered_qty))
+
 	def test_pos_si_without_payment(self):
 		make_pos_profile()
 
@@ -3428,6 +3468,78 @@ class TestSalesInvoice(unittest.TestCase):
 
 		frappe.db.set_value(
 			"Accounts Settings", "Accounts Settings", "unlink_payment_on_cancel_of_invoice", unlink_enabled
+		)
+
+	def test_gain_loss_on_advance_cancellation(self):
+		unlink_enabled = frappe.db.get_single_value(
+			"Accounts Settings", "unlink_payment_on_cancellation_of_invoice"
+		)
+
+		frappe.db.set_single_value("Accounts Settings", "unlink_payment_on_cancellation_of_invoice", 1)
+
+		pe = frappe.get_doc(
+			{
+				"doctype": "Payment Entry",
+				"payment_type": "Receive",
+				"party_type": "Customer",
+				"party": "_Test Customer USD",
+				"company": "_Test Company",
+				"paid_from_account_currency": "USD",
+				"paid_to_account_currency": "INR",
+				"source_exchange_rate": 70,
+				"target_exchange_rate": 1,
+				"reference_no": "1",
+				"reference_date": nowdate(),
+				"received_amount": 70,
+				"paid_amount": 1,
+				"paid_from": "_Test Receivable USD - _TC",
+				"paid_to": "_Test Cash - _TC",
+			}
+		)
+		pe.insert()
+		pe.submit()
+
+		si = create_sales_invoice(
+			customer="_Test Customer USD",
+			debit_to="_Test Receivable USD - _TC",
+			currency="USD",
+			conversion_rate=75,
+			do_not_save=1,
+			rate=1,
+		)
+		si = si.save()
+
+		si.append(
+			"advances",
+			{
+				"reference_type": "Payment Entry",
+				"reference_name": pe.name,
+				"advance_amount": 1,
+				"allocated_amount": 1,
+				"ref_exchange_rate": 70,
+			},
+		)
+		si.save()
+		si.submit()
+		expected_gle = [
+			["_Test Receivable USD - _TC", 75.0, 5.0],
+			["Exchange Gain/Loss - _TC", 5.0, 0.0],
+			["Sales - _TC", 0.0, 75.0],
+		]
+		check_gl_entries(self, si.name, expected_gle, nowdate())
+
+		# cancel advance payment
+		pe.reload()
+		pe.cancel()
+
+		expected_gle_after = [
+			["_Test Receivable USD - _TC", 75.0, 0.0],
+			["Sales - _TC", 0.0, 75.0],
+		]
+		check_gl_entries(self, si.name, expected_gle_after, nowdate())
+
+		frappe.db.set_single_value(
+			"Accounts Settings", "unlink_payment_on_cancellation_of_invoice", unlink_enabled
 		)
 
 	def test_batch_expiry_for_sales_invoice_return(self):

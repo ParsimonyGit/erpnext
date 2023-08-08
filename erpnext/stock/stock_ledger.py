@@ -278,6 +278,8 @@ def update_args_in_repost_item_valuation(
 	frappe.publish_realtime(
 		"item_reposting_progress",
 		{"name": doc.name, "items_to_be_repost": json.dumps(args, default=str), "current_index": index},
+		doctype=doc.doctype,
+		docname=doc.name,
 	)
 
 
@@ -501,7 +503,8 @@ class update_entries_after(object):
 
 	def update_distinct_item_warehouses(self, dependant_sle):
 		key = (dependant_sle.item_code, dependant_sle.warehouse)
-		val = frappe._dict({"sle": dependant_sle})
+		val = frappe._dict({"sle": dependant_sle, "dependent_voucher_detail_nos": []})
+
 		if key not in self.distinct_item_warehouses:
 			self.distinct_item_warehouses[key] = val
 			self.new_items_found = True
@@ -509,10 +512,26 @@ class update_entries_after(object):
 			existing_sle_posting_date = (
 				self.distinct_item_warehouses[key].get("sle", {}).get("posting_date")
 			)
+
+			dependent_voucher_detail_nos = self.get_dependent_voucher_detail_nos(key)
+
 			if getdate(dependant_sle.posting_date) < getdate(existing_sle_posting_date):
 				val.sle_changed = True
 				self.distinct_item_warehouses[key] = val
 				self.new_items_found = True
+			elif dependant_sle.voucher_detail_no not in set(dependent_voucher_detail_nos):
+				# Future dependent voucher needs to be repost to get the correct stock value
+				# If dependent voucher has not reposted, then add it to the list
+				dependent_voucher_detail_nos.append(dependant_sle.voucher_detail_no)
+				self.new_items_found = True
+				val.dependent_voucher_detail_nos = dependent_voucher_detail_nos
+				self.distinct_item_warehouses[key] = val
+
+	def get_dependent_voucher_detail_nos(self, key):
+		if "dependent_voucher_detail_nos" not in self.distinct_item_warehouses[key]:
+			self.distinct_item_warehouses[key].dependent_voucher_detail_nos = []
+
+		return self.distinct_item_warehouses[key].dependent_voucher_detail_nos
 
 	def process_sle(self, sle):
 		from erpnext.stock.doctype.serial_no.serial_no import get_serial_nos
@@ -536,7 +555,7 @@ class update_entries_after(object):
 			sle.voucher_type in ["Purchase Receipt", "Purchase Invoice"]
 			and sle.voucher_detail_no
 			and sle.actual_qty < 0
-			and frappe.get_cached_value(sle.voucher_type, sle.voucher_no, "is_internal_supplier")
+			and is_internal_transfer(sle)
 		):
 			sle.outgoing_rate = get_incoming_rate_for_inter_company_transfer(sle)
 
@@ -648,7 +667,7 @@ class update_entries_after(object):
 			elif (
 				sle.voucher_type in ["Purchase Receipt", "Purchase Invoice"]
 				and sle.voucher_detail_no
-				and frappe.get_cached_value(sle.voucher_type, sle.voucher_no, "is_internal_supplier")
+				and is_internal_transfer(sle)
 			):
 				rate = get_incoming_rate_for_inter_company_transfer(sle)
 			else:
@@ -1021,7 +1040,7 @@ class update_entries_after(object):
 			frappe.db.set_value("Bin", bin_name, updated_values)
 
 
-def get_previous_sle_of_current_voucher(args, exclude_current_voucher=False):
+def get_previous_sle_of_current_voucher(args, operator="<", exclude_current_voucher=False):
 	"""get stock ledger entries filtered by specific posting datetime conditions"""
 
 	args["time_format"] = "%H:%i:%s"
@@ -1043,11 +1062,17 @@ def get_previous_sle_of_current_voucher(args, exclude_current_voucher=False):
 			and warehouse = %(warehouse)s
 			and is_cancelled = 0
 			{voucher_condition}
-			and timestamp(posting_date, time_format(posting_time, %(time_format)s)) < timestamp(%(posting_date)s, time_format(%(posting_time)s, %(time_format)s))
+			and (
+				posting_date < %(posting_date)s or
+				(
+					posting_date = %(posting_date)s and
+					time_format(posting_time, %(time_format)s) {operator} time_format(%(posting_time)s, %(time_format)s)
+				)
+			)
 		order by timestamp(posting_date, posting_time) desc, creation desc
 		limit 1
 		for update""".format(
-			voucher_condition=voucher_condition
+			operator=operator, voucher_condition=voucher_condition
 		),
 		args,
 		as_dict=1,
@@ -1144,12 +1169,15 @@ def get_stock_ledger_entries(
 def get_sle_by_voucher_detail_no(voucher_detail_no, excluded_sle=None):
 	return frappe.db.get_value(
 		"Stock Ledger Entry",
-		{"voucher_detail_no": voucher_detail_no, "name": ["!=", excluded_sle]},
+		{"voucher_detail_no": voucher_detail_no, "name": ["!=", excluded_sle], "is_cancelled": 0},
 		[
 			"item_code",
 			"warehouse",
+			"actual_qty",
+			"qty_after_transaction",
 			"posting_date",
 			"posting_time",
+			"voucher_detail_no",
 			"timestamp(posting_date, posting_time) as timestamp",
 		],
 		as_dict=1,
@@ -1285,7 +1313,7 @@ def get_stock_reco_qty_shift(args):
 			stock_reco_qty_shift = flt(args.actual_qty)
 	else:
 		# reco is being submitted
-		last_balance = get_previous_sle_of_current_voucher(args, exclude_current_voucher=True).get(
+		last_balance = get_previous_sle_of_current_voucher(args, "<=", exclude_current_voucher=True).get(
 			"qty_after_transaction"
 		)
 
@@ -1482,3 +1510,15 @@ def get_incoming_rate_for_inter_company_transfer(sle) -> float:
 		)
 
 	return rate
+
+
+def is_internal_transfer(sle):
+	data = frappe.get_cached_value(
+		sle.voucher_type,
+		sle.voucher_no,
+		["is_internal_supplier", "represents_company", "company"],
+		as_dict=True,
+	)
+
+	if data.is_internal_supplier and data.represents_company == data.company:
+		return True

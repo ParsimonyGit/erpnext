@@ -75,6 +75,7 @@ class JournalEntry(AccountsController):
 		self.validate_empty_accounts_table()
 		self.set_account_and_party_balance()
 		self.validate_inter_company_accounts()
+		self.validate_depr_entry_voucher_type()
 
 		if self.docstatus == 0:
 			self.apply_tax_withholding()
@@ -87,6 +88,7 @@ class JournalEntry(AccountsController):
 		self.check_credit_limit()
 		self.make_gl_entries()
 		self.update_advance_paid()
+		self.update_asset_value()
 		self.update_expense_claim()
 		self.update_inter_company_jv()
 		self.update_invoice_discounting()
@@ -132,6 +134,13 @@ class JournalEntry(AccountsController):
 			if account_currency == previous_account_currency:
 				if self.total_credit != doc.total_debit or self.total_debit != doc.total_credit:
 					frappe.throw(_("Total Credit/ Debit Amount should be same as linked Journal Entry"))
+
+	def validate_depr_entry_voucher_type(self):
+		if (
+			any(d.account_type == "Depreciation" for d in self.get("accounts"))
+			and self.voucher_type != "Depreciation Entry"
+		):
+			frappe.throw(_("Journal Entry type should be set as Depreciation Entry for asset depreciation"))
 
 	def validate_stock_accounts(self):
 		stock_accounts = get_stock_accounts(self.company, self.doctype, self.name)
@@ -235,6 +244,34 @@ class JournalEntry(AccountsController):
 		for d in to_remove:
 			self.remove(d)
 
+	def update_asset_value(self):
+		if self.flags.planned_depr_entry or self.voucher_type != "Depreciation Entry":
+			return
+
+		for d in self.get("accounts"):
+			if (
+				d.reference_type == "Asset"
+				and d.reference_name
+				and d.account_type == "Depreciation"
+				and d.debit
+			):
+				asset = frappe.get_doc("Asset", d.reference_name)
+
+				if asset.calculate_depreciation:
+					fb_idx = 1
+					if self.finance_book:
+						for fb_row in asset.get("finance_books"):
+							if fb_row.finance_book == self.finance_book:
+								fb_idx = fb_row.idx
+								break
+					fb_row = asset.get("finance_books")[fb_idx - 1]
+					fb_row.value_after_depreciation -= d.debit
+					fb_row.db_update()
+				else:
+					asset.db_set("value_after_depreciation", asset.value_after_depreciation - d.debit)
+
+				asset.set_status()
+
 	def update_inter_company_jv(self):
 		if (
 			self.voucher_type == "Inter Company Journal Entry"
@@ -294,18 +331,44 @@ class JournalEntry(AccountsController):
 
 	def unlink_asset_reference(self):
 		for d in self.get("accounts"):
-			if d.reference_type == "Asset" and d.reference_name:
+			if (
+				self.voucher_type == "Depreciation Entry"
+				and d.reference_type == "Asset"
+				and d.reference_name
+				and d.account_type == "Depreciation"
+				and d.debit
+			):
 				asset = frappe.get_doc("Asset", d.reference_name)
-				for s in asset.get("schedules"):
-					if s.journal_entry == self.name:
-						s.db_set("journal_entry", None)
 
-						idx = cint(s.finance_book_id) or 1
-						finance_books = asset.get("finance_books")[idx - 1]
-						finance_books.value_after_depreciation += s.depreciation_amount
-						finance_books.db_update()
+				if asset.calculate_depreciation:
+					fb_idx = None
+					for s in asset.get("schedules"):
+						if s.journal_entry == self.name:
+							s.db_set("journal_entry", None)
+							fb_idx = cint(s.finance_book_id) or 1
+							break
+					if not fb_idx:
+						fb_idx = 1
+						if self.finance_book:
+							for fb_row in asset.get("finance_books"):
+								if fb_row.finance_book == self.finance_book:
+									fb_idx = fb_row.idx
+									break
+					fb_row = asset.get("finance_books")[fb_idx - 1]
+					fb_row.value_after_depreciation += d.debit
+					fb_row.db_update()
+				else:
+					asset.db_set("value_after_depreciation", asset.value_after_depreciation + d.debit)
+				asset.set_status()
+			elif self.voucher_type == "Journal Entry" and d.reference_type == "Asset" and d.reference_name:
+				journal_entry_for_scrap = frappe.db.get_value(
+					"Asset", d.reference_name, "journal_entry_for_scrap"
+				)
 
-						asset.set_status()
+				if journal_entry_for_scrap == self.name:
+					frappe.throw(
+						_("Journal Entry for Asset scrapping cannot be cancelled. Please restore the Asset.")
+					)
 
 	def unlink_inter_company_jv(self):
 		if (
@@ -335,6 +398,15 @@ class JournalEntry(AccountsController):
 					frappe.throw(
 						_("Row {0}: Party Type and Party is required for Receivable / Payable account {1}").format(
 							d.idx, d.account
+						)
+					)
+				elif (
+					d.party_type
+					and frappe.db.get_value("Party Type", d.party_type, "account_type") != account_type
+				):
+					frappe.throw(
+						_("Row {0}: Account {1} and Party Type {2} have different account types").format(
+							d.idx, d.account, d.party_type
 						)
 					)
 
