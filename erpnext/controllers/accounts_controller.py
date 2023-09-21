@@ -164,7 +164,6 @@ class AccountsController(TransactionBase):
 		if self.meta.get_field("currency"):
 			self.calculate_taxes_and_totals()
 			validate_return(self)
-			self.set_total_in_words()
 
 		self.validate_all_documents_schedule()
 
@@ -202,6 +201,8 @@ class AccountsController(TransactionBase):
 
 		if self.doctype != "Material Request" and not self.ignore_pricing_rule:
 			apply_pricing_rule_on_transaction(self)
+
+		self.set_total_in_words()
 
 	def before_cancel(self):
 		validate_einvoice_fields(self)
