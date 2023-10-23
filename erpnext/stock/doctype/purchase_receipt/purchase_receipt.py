@@ -341,7 +341,7 @@ class PurchaseReceipt(BuyingController):
 		exchange_rate_map, net_rate_map = get_purchase_document_details(self)
 
 		for d in self.get("items"):
-			if d.item_code in stock_items and flt(d.valuation_rate) and flt(d.qty):
+			if d.item_code in stock_items and flt(d.qty) and (flt(d.valuation_rate) or self.is_return):
 				if warehouse_account.get(d.warehouse):
 					stock_value_diff = frappe.db.get_value(
 						"Stock Ledger Entry",
@@ -958,6 +958,10 @@ def update_billing_percentage(pr_doc, update_modified=True, adjust_incoming_rate
 
 		total_amount += total_billable_amount
 		total_billed_amount += flt(item.billed_amt)
+
+		if pr_doc.get("is_return") and not total_amount and total_billed_amount:
+			total_amount = total_billed_amount
+
 		if adjust_incoming_rate:
 			adjusted_amt = 0.0
 			if item.billed_amt and item.amount:
