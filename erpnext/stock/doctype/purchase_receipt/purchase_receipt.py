@@ -341,7 +341,7 @@ class PurchaseReceipt(BuyingController):
 		exchange_rate_map, net_rate_map = get_purchase_document_details(self)
 
 		for d in self.get("items"):
-			if d.item_code in stock_items and flt(d.valuation_rate) and flt(d.qty):
+			if d.item_code in stock_items and flt(d.qty) and (flt(d.valuation_rate) or self.is_return):
 				if warehouse_account.get(d.warehouse):
 					stock_value_diff = frappe.db.get_value(
 						"Stock Ledger Entry",
@@ -472,27 +472,28 @@ class PurchaseReceipt(BuyingController):
 
 					# Amount added through landed-cos-voucher
 					if d.landed_cost_voucher_amount and landed_cost_entries:
-						for account, amount in landed_cost_entries[(d.item_code, d.name)].items():
-							account_currency = get_account_currency(account)
-							credit_amount = (
-								flt(amount["base_amount"])
-								if (amount["base_amount"] or account_currency != self.company_currency)
-								else flt(amount["amount"])
-							)
+						if (d.item_code, d.name) in landed_cost_entries:
+							for account, amount in landed_cost_entries[(d.item_code, d.name)].items():
+								account_currency = get_account_currency(account)
+								credit_amount = (
+									flt(amount["base_amount"])
+									if (amount["base_amount"] or account_currency != self.company_currency)
+									else flt(amount["amount"])
+								)
 
-							self.add_gl_entry(
-								gl_entries=gl_entries,
-								account=account,
-								cost_center=d.cost_center,
-								debit=0.0,
-								credit=credit_amount,
-								remarks=remarks,
-								against_account=warehouse_account_name,
-								credit_in_account_currency=flt(amount["amount"]),
-								account_currency=account_currency,
-								project=d.project,
-								item=d,
-							)
+								self.add_gl_entry(
+									gl_entries=gl_entries,
+									account=account,
+									cost_center=d.cost_center,
+									debit=0.0,
+									credit=credit_amount,
+									remarks=remarks,
+									against_account=warehouse_account_name,
+									credit_in_account_currency=flt(amount["amount"]),
+									account_currency=account_currency,
+									project=d.project,
+									item=d,
+								)
 
 					if d.rate_difference_with_purchase_invoice and stock_rbnb:
 						account_currency = get_account_currency(stock_rbnb)
@@ -604,7 +605,7 @@ class PurchaseReceipt(BuyingController):
 			account=provisional_account,
 			cost_center=item.cost_center,
 			debit=0.0,
-			credit=multiplication_factor * item.amount,
+			credit=multiplication_factor * item.base_amount,
 			remarks=remarks,
 			against_account=expense_account,
 			account_currency=credit_currency,
@@ -618,7 +619,7 @@ class PurchaseReceipt(BuyingController):
 			gl_entries=gl_entries,
 			account=expense_account,
 			cost_center=item.cost_center,
-			debit=multiplication_factor * item.amount,
+			debit=multiplication_factor * item.base_amount,
 			credit=0.0,
 			remarks=remarks,
 			against_account=provisional_account,
@@ -957,6 +958,10 @@ def update_billing_percentage(pr_doc, update_modified=True, adjust_incoming_rate
 
 		total_amount += total_billable_amount
 		total_billed_amount += flt(item.billed_amt)
+
+		if pr_doc.get("is_return") and not total_amount and total_billed_amount:
+			total_amount = total_billed_amount
+
 		if adjust_incoming_rate:
 			adjusted_amt = 0.0
 			if item.billed_amt and item.amount:
