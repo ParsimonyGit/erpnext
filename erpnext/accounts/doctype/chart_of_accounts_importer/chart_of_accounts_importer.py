@@ -122,7 +122,7 @@ def generate_data_from_csv(file_doc, as_dict=False):
 					{frappe.scrub(header): row[index] for index, header in enumerate(headers)}
 				)
 			else:
-				if not row[1]:
+				if not row[1] and len(row) > 1:
 					row[1] = row[0]
 					row[3] = row[2]
 				data.append(row)
