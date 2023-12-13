@@ -898,7 +898,27 @@ def make_inter_company_transaction(doctype, source_name, target_doc=None):
 		set_missing_values,
 	)
 
-	return doclist
+	# map Purchase Receipt with Purchase Order
+	for source_item in source_doc.items:
+		purchase_order_reference = frappe.get_value(
+			"Sales Order",
+			source_item.against_sales_order,
+			["inter_company_order_reference"]
+		)
+		purchase_order_item_details = frappe.get_all(
+			"Purchase Order Item",
+			filters={"parent": purchase_order_reference},
+			fields=["name", "item_code"]
+		)
+
+		# optimization needed
+		for item in doclist.items:
+			for item_detail in purchase_order_item_details:
+				if item.item_code == item_detail.item_code:
+					item.purchase_order = purchase_order_reference
+					item.purchase_order_item = item_detail.name
+
+		return doclist
 
 
 def on_doctype_update():
