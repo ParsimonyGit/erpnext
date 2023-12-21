@@ -1367,9 +1367,11 @@ def get_price_list_currency_and_exchange_rate(args):
 def get_default_bom(item_code=None, company=None):
 	def _get_bom(item):
 		if company:
-			bom = frappe.get_all(
-				"BOM", dict(item=item, is_active=True, company=company, docstatus=1), limit=1
+			boms = frappe.get_all(
+				"BOM", filters={"item": item, "is_active":True, "company":company, "docstatus":1},
+				fields=["name", "is_default"]
 			)
+			bom = [frappe._dict({"name": d.name}) for d in boms if d.is_default]
 		else:
 			bom = frappe.get_all(
 				"BOM", dict(item=item, is_active=True, is_default=True, docstatus=1), limit=1
