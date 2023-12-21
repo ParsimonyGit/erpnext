@@ -1368,10 +1368,12 @@ def get_default_bom(item_code=None, company=None):
 	def _get_bom(item):
 		if company:
 			boms = frappe.get_all(
-				"BOM", filters={"item": item, "is_active":True, "company":company, "docstatus":1},
-				fields=["name", "is_default"]
+				"BOM", filters={"item": item, "is_active": True, "company": company, "docstatus": 1},
+				fields=["name", "is_default"],
+				order_by = "modified desc"
 			)
-			bom = [frappe._dict({"name": d.name}) for d in boms if d.is_default]
+			default_bom = [d for d in boms if d.is_default]
+			bom = default_bom if len(default_bom) else boms
 		else:
 			bom = frappe.get_all(
 				"BOM", dict(item=item, is_active=True, is_default=True, docstatus=1), limit=1
