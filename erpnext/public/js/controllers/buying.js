@@ -449,6 +449,7 @@ erpnext.buying.get_default_bom = function(frm) {
 				method: "erpnext.stock.get_item_details.get_default_bom",
 				args: {
 					"item_code": d.item_code,
+					"company": frm.doc.company
 				},
 				callback: function(r) {
 					if(r) {
