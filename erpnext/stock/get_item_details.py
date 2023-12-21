@@ -132,7 +132,7 @@ def get_item_details(args, doc=None, for_validate=False, overwrite_warehouse=Tru
 		out.schedule_date = out.lead_time_date = add_days(args.transaction_date, item.lead_time_days)
 
 	if args.get("is_subcontracted") == "Yes":
-		out.bom = args.get("bom") or get_default_bom(args.item_code)
+		out.bom = args.get("bom") or get_default_bom(args.item_code, args.company)
 
 	get_gross_profit(out)
 	if args.doctype == "Material Request":
@@ -1364,11 +1364,16 @@ def get_price_list_currency_and_exchange_rate(args):
 
 
 @frappe.whitelist()
-def get_default_bom(item_code=None):
+def get_default_bom(item_code=None, company=None):
 	def _get_bom(item):
-		bom = frappe.get_all(
-			"BOM", dict(item=item, is_active=True, is_default=True, docstatus=1), limit=1
-		)
+		if company:
+			bom = frappe.get_all(
+				"BOM", dict(item=item, is_active=True, company=company, docstatus=1), limit=1
+			)
+		else:
+			bom = frappe.get_all(
+				"BOM", dict(item=item, is_active=True, is_default=True, docstatus=1), limit=1
+			)
 		return bom[0].name if bom else None
 
 	if not item_code:
