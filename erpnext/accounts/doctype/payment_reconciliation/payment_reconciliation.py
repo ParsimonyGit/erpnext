@@ -111,8 +111,6 @@ class PaymentReconciliation(Document):
 	def get_payment_entries(self):
 		order_doctype = "Sales Order" if self.party_type == "Customer" else "Purchase Order"
 		condition = self.get_conditions(get_payments=True)
-		if self.payment_name:
-			condition += "name like '%%{0}%%'".format(self.payment_name)
 
 		payment_entries = get_advance_payment_entries_for_regional(
 			self.party_type,
@@ -122,6 +120,7 @@ class PaymentReconciliation(Document):
 			against_all_orders=True,
 			limit=self.payment_limit,
 			condition=condition,
+			payment_name=self.payment_name,
 		)
 
 		return payment_entries
@@ -538,6 +537,27 @@ class PaymentReconciliation(Document):
 			)
 
 			invoice_exchange_map.update(purchase_invoice_map)
+
+		journals = [
+			d.get("invoice_number") for d in invoices if d.get("invoice_type") == "Journal Entry"
+		]
+		journals.extend(
+			[d.get("reference_name") for d in payments if d.get("reference_type") == "Journal Entry"]
+		)
+		if journals:
+			journals = list(set(journals))
+			journals_map = frappe._dict(
+				frappe.db.get_all(
+					"Journal Entry Account",
+					filters={"parent": ("in", journals), "account": ("in", [self.receivable_payable_account])},
+					fields=[
+						"parent as `name`",
+						"exchange_rate",
+					],
+					as_list=1,
+				)
+			)
+			invoice_exchange_map.update(journals_map)
 
 		return invoice_exchange_map
 
