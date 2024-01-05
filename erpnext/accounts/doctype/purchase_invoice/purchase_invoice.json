@@ -43,6 +43,7 @@
   "plc_conversion_rate",
   "ignore_pricing_rule",
   "sec_warehouse",
+  "scan_barcode",
   "col_break_warehouse",
   "update_stock",
   "filter_items_by_supplier",
