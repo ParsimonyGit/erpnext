@@ -33,6 +33,7 @@
   "plc_conversion_rate",
   "ignore_pricing_rule",
   "items_section",
+  "filter_items_by_supplier",
   "items",
   "section_break_22",
   "total_qty",
@@ -921,6 +922,13 @@
    "fieldname": "accounting_dimensions_section",
    "fieldtype": "Section Break",
    "label": "Accounting Dimensions"
+  },
+  {
+   "default": "0",
+   "depends_on": "eval: doc.supplier",
+   "fieldname": "filter_items_by_supplier",
+   "fieldtype": "Check",
+   "label": "Filter Items by Supplier"
   }
  ],
  "icon": "fa fa-shopping-cart",
@@ -928,7 +936,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2023-11-20 11:15:30.083077",
+ "modified": "2023-11-21 11:15:30.083077",
  "modified_by": "Administrator",
  "module": "Buying",
  "name": "Supplier Quotation",

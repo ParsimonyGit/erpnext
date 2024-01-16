@@ -230,7 +230,7 @@ def build_forest(data):
 							frappe.bold(parent_account)
 						)
 					)
-				return [child] + parent_account_list
+				return [child] + (parent_account_list or [])
 
 	charts_map, paths = {}, []
 

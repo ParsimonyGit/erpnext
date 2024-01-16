@@ -48,6 +48,7 @@
   "is_subcontracted",
   "supplier_warehouse",
   "items_section",
+  "filter_items_by_supplier",
   "items",
   "section_break0",
   "total_qty",
@@ -1246,13 +1247,20 @@
    "label": "Subcontracting Receipt",
    "options": "Subcontracting Receipt",
    "search_index": 1
+  },
+  {
+   "default": "0",
+   "depends_on": "eval: doc.supplier",
+   "fieldname": "filter_items_by_supplier",
+   "fieldtype": "Check",
+   "label": "Filter Items by Supplier"
   }
  ],
  "icon": "fa fa-truck",
  "idx": 261,
  "is_submittable": 1,
  "links": [],
- "modified": "2023-12-18 17:26:41.279663",
+ "modified": "2023-12-19 17:26:41.279663",
  "modified_by": "Administrator",
  "module": "Stock",
  "name": "Purchase Receipt",

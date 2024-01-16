@@ -46,6 +46,7 @@
   "scan_barcode",
   "col_break_warehouse",
   "update_stock",
+  "filter_items_by_supplier",
   "set_warehouse",
   "set_from_warehouse",
   "is_subcontracted",
@@ -1606,13 +1607,19 @@
    "fieldtype": "Link",
    "label": "Supplier Group",
    "options": "Supplier Group"
+  },
+  {
+   "depends_on": "eval: doc.supplier",
+   "fieldname": "filter_items_by_supplier",
+   "fieldtype": "Check",
+   "label": "Filter Items by Supplier"
   }
  ],
  "icon": "fa fa-file-text",
  "idx": 204,
  "is_submittable": 1,
  "links": [],
- "modified": "2023-11-29 15:35:44.697496",
+ "modified": "2023-11-30 15:35:44.697496",
  "modified_by": "Administrator",
  "module": "Accounts",
  "name": "Purchase Invoice",
