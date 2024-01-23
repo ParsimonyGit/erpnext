@@ -717,7 +717,7 @@ class PurchaseReceipt(BuyingController):
 			):
 				warehouse_with_no_account.append(d.warehouse or d.rejected_warehouse)
 
-			if d.is_fixed_asset:
+			if d.is_fixed_asset and d.landed_cost_voucher_amount:
 				self.update_assets(d, d.valuation_rate)
 
 		if warehouse_with_no_account:
@@ -849,11 +849,14 @@ class PurchaseReceipt(BuyingController):
 		)
 
 		for asset in assets:
+			purchase_amount = flt(valuation_rate) * asset.asset_quantity
 			frappe.db.set_value(
-				"Asset", asset.name, "gross_purchase_amount", flt(valuation_rate) * asset.asset_quantity
-			)
-			frappe.db.set_value(
-				"Asset", asset.name, "purchase_receipt_amount", flt(valuation_rate) * asset.asset_quantity
+				"Asset",
+				asset.name,
+				{
+					"gross_purchase_amount": purchase_amount,
+					"purchase_receipt_amount": purchase_amount,
+				},
 			)
 
 	def update_status(self, status):
@@ -1225,6 +1228,7 @@ def make_purchase_invoice(source_name, target_doc=None, args=None):
 				"field_map": {
 					"name": "pr_detail",
 					"parent": "purchase_receipt",
+					"qty": "received_qty",
 					"purchase_order_item": "po_detail",
 					"purchase_order": "purchase_order",
 					"is_fixed_asset": "is_fixed_asset",

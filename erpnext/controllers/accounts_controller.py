@@ -129,6 +129,17 @@ class AccountsController(TransactionBase):
 			if self.doctype in relevant_docs:
 				self.set_payment_schedule()
 
+	def remove_bundle_for_non_stock_invoices(self):
+		has_sabb = False
+		if self.doctype in ("Sales Invoice", "Purchase Invoice") and not self.update_stock:
+			for item in self.get("items"):
+				if item.serial_and_batch_bundle:
+					item.serial_and_batch_bundle = None
+					has_sabb = True
+
+		if has_sabb:
+			self.remove_serial_and_batch_bundle()
+
 	def ensure_supplier_is_not_blocked(self):
 		is_supplier_payment = self.doctype == "Payment Entry" and self.party_type == "Supplier"
 		is_buying_invoice = self.doctype in ["Purchase Invoice", "Purchase Order"]
@@ -155,6 +166,9 @@ class AccountsController(TransactionBase):
 
 		if self.get("_action") and self._action != "update_after_submit":
 			self.set_missing_values(for_validate=True)
+
+		if self.get("_action") == "submit":
+			self.remove_bundle_for_non_stock_invoices()
 
 		self.ensure_supplier_is_not_blocked()
 
@@ -557,18 +571,12 @@ class AccountsController(TransactionBase):
 			validate_due_date(
 				self.posting_date,
 				self.due_date,
-				"Customer",
-				self.customer,
-				self.company,
 				self.payment_terms_template,
 			)
 		elif self.doctype == "Purchase Invoice":
 			validate_due_date(
 				self.bill_date or self.posting_date,
 				self.due_date,
-				"Supplier",
-				self.supplier,
-				self.company,
 				self.bill_date,
 				self.payment_terms_template,
 			)
@@ -1402,10 +1410,15 @@ class AccountsController(TransactionBase):
 			reconcile_against_document(lst)
 
 	def on_cancel(self):
+		from erpnext.accounts.doctype.bank_transaction.bank_transaction import (
+			remove_from_bank_transaction,
+		)
 		from erpnext.accounts.utils import (
 			cancel_exchange_gain_loss_journal,
 			unlink_ref_doc_from_payment_entries,
 		)
+
+		remove_from_bank_transaction(self.doctype, self.name)
 
 		if self.doctype in ["Sales Invoice", "Purchase Invoice", "Payment Entry", "Journal Entry"]:
 			# Cancel Exchange Gain/Loss Journal before unlinking
@@ -1935,7 +1948,7 @@ class AccountsController(TransactionBase):
 			self.remove(item)
 
 	def set_payment_schedule(self):
-		if self.doctype == "Sales Invoice" and self.is_pos:
+		if (self.doctype == "Sales Invoice" and self.is_pos) or self.get("is_opening") == "Yes":
 			self.payment_terms_template = ""
 			return
 
@@ -2118,7 +2131,7 @@ class AccountsController(TransactionBase):
 			)
 
 	def validate_payment_schedule_amount(self):
-		if self.doctype == "Sales Invoice" and self.is_pos:
+		if (self.doctype == "Sales Invoice" and self.is_pos) or self.get("is_opening") == "Yes":
 			return
 
 		party_account_currency = self.get("party_account_currency")
