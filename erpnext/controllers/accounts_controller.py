@@ -212,6 +212,18 @@ class AccountsController(TransactionBase):
 					)
 				)
 
+			if self.get("is_return") and self.get("return_against"):
+				document_type = "Credit Note" if self.doctype == "Sales Invoice" else "Debit Note"
+				frappe.msgprint(
+					_(
+						"{0} will be treated as a standalone {0}. Post creation use {1} tool to reconcile against {2}."
+					).format(
+						document_type,
+						get_link_to_form("Payment Reconciliation", "Payment Reconciliation"),
+						get_link_to_form(self.doctype, self.get("return_against")),
+					)
+				)
+
 			pos_check_field = "is_pos" if self.doctype == "Sales Invoice" else "is_paid"
 			if cint(self.allocate_advances_automatically) and not cint(self.get(pos_check_field)):
 				self.set_advances()
@@ -689,7 +701,7 @@ class AccountsController(TransactionBase):
 					if self.get("is_subcontracted"):
 						args["is_subcontracted"] = self.is_subcontracted
 
-					ret = get_item_details(args, self, for_validate=True, overwrite_warehouse=False)
+					ret = get_item_details(args, self, for_validate=for_validate, overwrite_warehouse=False)
 
 					for fieldname, value in ret.items():
 						if item.meta.get_field(fieldname) and value is not None:
@@ -1468,6 +1480,24 @@ class AccountsController(TransactionBase):
 						x.update({dim.fieldname: self.get(dim.fieldname)})
 			reconcile_against_document(lst, active_dimensions=active_dimensions)
 
+	def cancel_system_generated_credit_debit_notes(self):
+		# Cancel 'Credit/Debit' Note Journal Entries, if found.
+		if self.doctype in ["Sales Invoice", "Purchase Invoice"]:
+			voucher_type = "Credit Note" if self.doctype == "Sales Invoice" else "Debit Note"
+			journals = frappe.db.get_all(
+				"Journal Entry",
+				filters={
+					"is_system_generated": 1,
+					"reference_type": self.doctype,
+					"reference_name": self.name,
+					"voucher_type": voucher_type,
+					"docstatus": 1,
+				},
+				pluck="name",
+			)
+			for x in journals:
+				frappe.get_doc("Journal Entry", x).cancel()
+
 	def on_cancel(self):
 		from erpnext.accounts.doctype.bank_transaction.bank_transaction import (
 			remove_from_bank_transaction,
@@ -1480,6 +1510,8 @@ class AccountsController(TransactionBase):
 		remove_from_bank_transaction(self.doctype, self.name)
 
 		if self.doctype in ["Sales Invoice", "Purchase Invoice", "Payment Entry", "Journal Entry"]:
+			self.cancel_system_generated_credit_debit_notes()
+
 			# Cancel Exchange Gain/Loss Journal before unlinking
 			cancel_exchange_gain_loss_journal(self)
 
@@ -2627,7 +2659,7 @@ def get_advance_journal_entries(
 
 	if order_list:
 		q = q.where(
-			(journal_acc.reference_type == order_doctype) & ((journal_acc.reference_type).isin(order_list))
+			(journal_acc.reference_type == order_doctype) & ((journal_acc.reference_name).isin(order_list))
 		)
 
 	q = q.orderby(journal_entry.posting_date)
