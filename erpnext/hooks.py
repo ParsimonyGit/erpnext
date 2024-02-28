@@ -494,6 +494,7 @@ bank_reconciliation_doctypes = [
 	"Payment Entry",
 	"Journal Entry",
 	"Purchase Invoice",
+	"Sales Invoice",
 ]
 
 accounting_dimension_doctypes = [
@@ -542,6 +543,8 @@ accounting_dimension_doctypes = [
 	"Account Closing Balance",
 	"Supplier Quotation",
 	"Supplier Quotation Item",
+	"Payment Reconciliation",
+	"Payment Reconciliation Allocation",
 ]
 
 get_matching_queries = (

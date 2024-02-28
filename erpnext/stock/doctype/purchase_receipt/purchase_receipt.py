@@ -368,6 +368,7 @@ class PurchaseReceipt(BuyingController):
 		else:
 			self.db_set("status", "Completed")
 
+		self.make_bundle_using_old_serial_batch_fields()
 		# Updating stock ledger should always be called after updating prevdoc status,
 		# because updating ordered qty, reserved_qty_for_subcontract in bin
 		# depends upon updated ordered qty in PO
@@ -683,9 +684,7 @@ class PurchaseReceipt(BuyingController):
 					)
 
 					stock_value_diff = (
-						flt(d.base_net_amount)
-						+ flt(d.item_tax_amount / self.conversion_rate)
-						+ flt(d.landed_cost_voucher_amount)
+						flt(d.base_net_amount) + flt(d.item_tax_amount) + flt(d.landed_cost_voucher_amount)
 					)
 				elif warehouse_account.get(d.warehouse):
 					stock_value_diff = get_stock_value_difference(self.name, d.name, d.warehouse)
@@ -717,7 +716,7 @@ class PurchaseReceipt(BuyingController):
 			):
 				warehouse_with_no_account.append(d.warehouse or d.rejected_warehouse)
 
-			if d.is_fixed_asset:
+			if d.is_fixed_asset and d.landed_cost_voucher_amount:
 				self.update_assets(d, d.valuation_rate)
 
 		if warehouse_with_no_account:
@@ -849,11 +848,14 @@ class PurchaseReceipt(BuyingController):
 		)
 
 		for asset in assets:
+			purchase_amount = flt(valuation_rate) * asset.asset_quantity
 			frappe.db.set_value(
-				"Asset", asset.name, "gross_purchase_amount", flt(valuation_rate) * asset.asset_quantity
-			)
-			frappe.db.set_value(
-				"Asset", asset.name, "purchase_receipt_amount", flt(valuation_rate) * asset.asset_quantity
+				"Asset",
+				asset.name,
+				{
+					"gross_purchase_amount": purchase_amount,
+					"purchase_receipt_amount": purchase_amount,
+				},
 			)
 
 	def update_status(self, status):
@@ -1225,6 +1227,7 @@ def make_purchase_invoice(source_name, target_doc=None, args=None):
 				"field_map": {
 					"name": "pr_detail",
 					"parent": "purchase_receipt",
+					"qty": "received_qty",
 					"purchase_order_item": "po_detail",
 					"purchase_order": "purchase_order",
 					"is_fixed_asset": "is_fixed_asset",
@@ -1354,16 +1357,16 @@ def get_item_account_wise_additional_cost(purchase_document):
 	for lcv in landed_cost_vouchers:
 		landed_cost_voucher_doc = frappe.get_doc("Landed Cost Voucher", lcv.parent)
 
+		based_on_field = None
 		# Use amount field for total item cost for manually cost distributed LCVs
-		if landed_cost_voucher_doc.distribute_charges_based_on == "Distribute Manually":
-			based_on_field = "amount"
-		else:
+		if landed_cost_voucher_doc.distribute_charges_based_on != "Distribute Manually":
 			based_on_field = frappe.scrub(landed_cost_voucher_doc.distribute_charges_based_on)
 
 		total_item_cost = 0
 
-		for item in landed_cost_voucher_doc.items:
-			total_item_cost += item.get(based_on_field)
+		if based_on_field:
+			for item in landed_cost_voucher_doc.items:
+				total_item_cost += item.get(based_on_field)
 
 		for item in landed_cost_voucher_doc.items:
 			if item.receipt_document == purchase_document:

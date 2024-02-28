@@ -13,6 +13,7 @@ from pypika import Case
 from pypika.functions import Coalesce, Sum
 
 import erpnext
+from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import get_dimensions
 from erpnext.accounts.doctype.bank_account.bank_account import (
 	get_bank_account_details,
 	get_party_bank_account,
@@ -95,6 +96,7 @@ class PaymentEntry(AccountsController):
 		self.validate_paid_invoices()
 		self.ensure_supplier_is_not_blocked()
 		self.set_status()
+		self.set_total_in_words()
 
 	def on_submit(self):
 		if self.difference_amount:
@@ -107,7 +109,7 @@ class PaymentEntry(AccountsController):
 
 	def set_liability_account(self):
 		# Auto setting liability account should only be done during 'draft' status
-		if self.docstatus > 0:
+		if self.docstatus > 0 or self.payment_type == "Internal Transfer":
 			return
 
 		if not frappe.db.get_value(
@@ -256,6 +258,7 @@ class PaymentEntry(AccountsController):
 					"get_outstanding_invoices": True,
 					"get_orders_to_be_billed": True,
 					"vouchers": vouchers,
+					"book_advance_payments_in_separate_party_account": self.book_advance_payments_in_separate_party_account,
 				},
 				validate=True,
 			)
@@ -701,6 +704,21 @@ class PaymentEntry(AccountsController):
 
 		self.db_set("status", self.status, update_modified=True)
 
+	def set_total_in_words(self):
+		from frappe.utils import money_in_words
+
+		if self.payment_type in ("Pay", "Internal Transfer"):
+			base_amount = abs(self.base_paid_amount)
+			amount = abs(self.paid_amount)
+			currency = self.paid_from_account_currency
+		elif self.payment_type == "Receive":
+			base_amount = abs(self.base_received_amount)
+			amount = abs(self.received_amount)
+			currency = self.paid_to_account_currency
+
+		self.base_in_words = money_in_words(base_amount, self.company_currency)
+		self.in_words = money_in_words(amount, currency)
+
 	def set_tax_withholding(self):
 		if not self.party_type == "Supplier":
 			return
@@ -928,19 +946,19 @@ class PaymentEntry(AccountsController):
 		)
 
 		base_party_amount = flt(self.base_total_allocated_amount) + flt(base_unallocated_amount)
-
-		if self.payment_type == "Receive":
-			self.difference_amount = base_party_amount - self.base_received_amount
-		elif self.payment_type == "Pay":
-			self.difference_amount = self.base_paid_amount - base_party_amount
-		else:
-			self.difference_amount = self.base_paid_amount - flt(self.base_received_amount)
-
-		total_deductions = sum(flt(d.amount) for d in self.get("deductions"))
 		included_taxes = self.get_included_taxes()
 
+		if self.payment_type == "Receive":
+			self.difference_amount = base_party_amount - self.base_received_amount + included_taxes
+		elif self.payment_type == "Pay":
+			self.difference_amount = self.base_paid_amount - base_party_amount - included_taxes
+		else:
+			self.difference_amount = self.base_paid_amount - flt(self.base_received_amount) - included_taxes
+
+		total_deductions = sum(flt(d.amount) for d in self.get("deductions"))
+
 		self.difference_amount = flt(
-			self.difference_amount - total_deductions - included_taxes, self.precision("difference_amount")
+			self.difference_amount - total_deductions, self.precision("difference_amount")
 		)
 
 	def get_included_taxes(self):
@@ -1587,6 +1605,13 @@ def get_outstanding_reference_documents(args, validate=False):
 		condition += " and cost_center='%s'" % args.get("cost_center")
 		accounting_dimensions_filter.append(ple.cost_center == args.get("cost_center"))
 
+	# dynamic dimension filters
+	active_dimensions = get_dimensions()[0]
+	for dim in active_dimensions:
+		if args.get(dim.fieldname):
+			condition += " and {0}='{1}'".format(dim.fieldname, args.get(dim.fieldname))
+			accounting_dimensions_filter.append(ple[dim.fieldname] == args.get(dim.fieldname))
+
 	date_fields_dict = {
 		"posting_date": ["from_posting_date", "to_posting_date"],
 		"due_date": ["from_due_date", "to_due_date"],
@@ -1614,11 +1639,16 @@ def get_outstanding_reference_documents(args, validate=False):
 	outstanding_invoices = []
 	negative_outstanding_invoices = []
 
+	if args.get("book_advance_payments_in_separate_party_account"):
+		party_account = get_party_account(args.get("party_type"), args.get("party"), args.get("company"))
+	else:
+		party_account = args.get("party_account")
+
 	if args.get("get_outstanding_invoices"):
 		outstanding_invoices = get_outstanding_invoices(
 			args.get("party_type"),
 			args.get("party"),
-			get_party_account(args.get("party_type"), args.get("party"), args.get("company")),
+			party_account,
 			common_filter=common_filter,
 			posting_date=posting_and_due_date,
 			min_outstanding=args.get("outstanding_amt_greater_than"),
@@ -1814,6 +1844,12 @@ def get_orders_to_be_billed(
 	condition = ""
 	if doc and hasattr(doc, "cost_center") and doc.cost_center:
 		condition = " and cost_center='%s'" % cost_center
+
+	# dynamic dimension filters
+	active_dimensions = get_dimensions()[0]
+	for dim in active_dimensions:
+		if filters.get(dim.fieldname):
+			condition += " and {0}='{1}'".format(dim.fieldname, filters.get(dim.fieldname))
 
 	if party_account_currency == company_currency:
 		grand_total_field = "base_grand_total"
