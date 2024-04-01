@@ -330,6 +330,13 @@ class WorkOrder(Document):
 		else:
 			status = "Cancelled"
 
+		if (
+			self.skip_transfer
+			and self.produced_qty
+			and self.qty > (flt(self.produced_qty) + flt(self.process_loss_qty))
+		):
+			status = "In Process"
+
 		return status
 
 	def update_work_order_qty(self):
@@ -529,6 +536,12 @@ class WorkOrder(Document):
 			"Item", self.production_item, ["serial_no_series", "item_name", "description"], as_dict=1
 		)
 
+		batches = []
+		if self.has_batch_no:
+			batches = frappe.get_all(
+				"Batch", filters={"reference_name": self.name}, order_by="creation", pluck="name"
+			)
+
 		serial_nos = []
 		if item_details.serial_no_series:
 			serial_nos = get_available_serial_nos(item_details.serial_no_series, self.qty)
@@ -549,10 +562,20 @@ class WorkOrder(Document):
 			"description",
 			"status",
 			"work_order",
+			"batch_no",
 		]
 
 		serial_nos_details = []
+		index = 0
 		for serial_no in serial_nos:
+			index += 1
+			batch_no = None
+			if batches and self.batch_size:
+				batch_no = batches[0]
+
+				if index % self.batch_size == 0:
+					batches.remove(batch_no)
+
 			serial_nos_details.append(
 				(
 					serial_no,
@@ -567,6 +590,7 @@ class WorkOrder(Document):
 					item_details.description,
 					"Inactive",
 					self.name,
+					batch_no,
 				)
 			)
 
@@ -784,7 +808,7 @@ class WorkOrder(Document):
 				)
 
 	def update_completed_qty_in_material_request(self):
-		if self.material_request:
+		if self.material_request and self.material_request_item:
 			frappe.get_doc("Material Request", self.material_request).update_completed_qty(
 				[self.material_request_item]
 			)

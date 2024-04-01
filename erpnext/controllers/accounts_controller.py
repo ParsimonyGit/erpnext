@@ -46,6 +46,7 @@ from erpnext.accounts.party import (
 from erpnext.accounts.utils import (
 	create_gain_loss_journal,
 	get_account_currency,
+	get_currency_precision,
 	get_fiscal_years,
 	validate_fiscal_year,
 )
@@ -88,6 +89,7 @@ force_item_fields = (
 	"weight_per_unit",
 	"weight_uom",
 	"total_weight",
+	"valuation_rate",
 )
 
 
@@ -167,6 +169,13 @@ class AccountsController(TransactionBase):
 		if not self.get("is_return") and not self.get("is_debit_note"):
 			self.validate_qty_is_not_zero()
 
+		if (
+			self.doctype in ["Sales Invoice", "Purchase Invoice"]
+			and self.get("is_return")
+			and self.get("update_stock")
+		):
+			self.validate_zero_qty_for_return_invoices_with_stock()
+
 		if self.get("_action") and self._action != "update_after_submit":
 			self.set_missing_values(for_validate=True)
 
@@ -213,17 +222,18 @@ class AccountsController(TransactionBase):
 				)
 
 			if self.get("is_return") and self.get("return_against") and not self.get("is_pos"):
-				# if self.get("is_return") and self.get("return_against"):
-				document_type = "Credit Note" if self.doctype == "Sales Invoice" else "Debit Note"
-				frappe.msgprint(
-					_(
-						"{0} will be treated as a standalone {0}. Post creation use {1} tool to reconcile against {2}."
-					).format(
-						document_type,
-						get_link_to_form("Payment Reconciliation", "Payment Reconciliation"),
-						get_link_to_form(self.doctype, self.get("return_against")),
+				if self.get("update_outstanding_for_self"):
+					document_type = "Credit Note" if self.doctype == "Sales Invoice" else "Debit Note"
+					frappe.msgprint(
+						_(
+							"We can see {0} is made against {1}. If you want {1}'s outstanding to be updated, uncheck '{2}' checkbox. <br><br> Or you can use {3} tool to reconcile against {1} later."
+						).format(
+							frappe.bold(document_type),
+							get_link_to_form(self.doctype, self.get("return_against")),
+							frappe.bold("Update Outstanding for Self"),
+							get_link_to_form("Payment Reconciliation", "Payment Reconciliation"),
+						)
 					)
-				)
 
 			pos_check_field = "is_pos" if self.doctype == "Sales Invoice" else "is_paid"
 			if cint(self.allocate_advances_automatically) and not cint(self.get(pos_check_field)):
@@ -365,6 +375,12 @@ class AccountsController(TransactionBase):
 
 		for bundle in bundles:
 			frappe.delete_doc("Serial and Batch Bundle", bundle.name)
+
+		batches = frappe.get_all(
+			"Batch", filters={"reference_doctype": self.doctype, "reference_name": self.name}
+		)
+		for row in batches:
+			frappe.delete_doc("Batch", row.name)
 
 	def validate_return_against_account(self):
 		if (
@@ -596,23 +612,31 @@ class AccountsController(TransactionBase):
 				)
 
 	def validate_due_date(self):
-		if self.get("is_pos"):
+		if self.get("is_pos") or self.doctype not in ["Sales Invoice", "Purchase Invoice"]:
 			return
 
 		from erpnext.accounts.party import validate_due_date
 
-		if self.doctype == "Sales Invoice":
+		posting_date = (
+			self.posting_date if self.doctype == "Sales Invoice" else (self.bill_date or self.posting_date)
+		)
+
+		# skip due date validation for records via Data Import
+		if frappe.flags.in_import and getdate(self.due_date) < getdate(posting_date):
+			self.due_date = posting_date
+
+		elif self.doctype == "Sales Invoice":
 			if not self.due_date:
 				frappe.throw(_("Due Date is mandatory"))
 
 			validate_due_date(
-				self.posting_date,
+				posting_date,
 				self.due_date,
 				self.payment_terms_template,
 			)
 		elif self.doctype == "Purchase Invoice":
 			validate_due_date(
-				self.bill_date or self.posting_date,
+				posting_date,
 				self.due_date,
 				self.bill_date,
 				self.payment_terms_template,
@@ -1038,6 +1062,18 @@ class AccountsController(TransactionBase):
 		else:
 			return flt(args.get(field, 0) / self.get("conversion_rate", 1))
 
+	def validate_zero_qty_for_return_invoices_with_stock(self):
+		rows = []
+		for item in self.items:
+			if not flt(item.qty):
+				rows.append(item)
+		if rows:
+			frappe.throw(
+				_(
+					"For Return Invoices with Stock effect, '0' qty Items are not allowed. Following rows are affected: {0}"
+				).format(frappe.bold(comma_and(["#" + str(x.idx) for x in rows])))
+			)
+
 	def validate_qty_is_not_zero(self):
 		if self.doctype == "Purchase Receipt":
 			return
@@ -1129,21 +1165,24 @@ class AccountsController(TransactionBase):
 			self.append("advances", advance_row)
 
 	def get_advance_entries(self, include_unallocated=True):
+		party_account = []
 		if self.doctype == "Sales Invoice":
 			party_type = "Customer"
 			party = self.customer
 			amount_field = "credit_in_account_currency"
 			order_field = "sales_order"
 			order_doctype = "Sales Order"
+			party_account.append(self.debit_to)
 		else:
 			party_type = "Supplier"
 			party = self.supplier
 			amount_field = "debit_in_account_currency"
 			order_field = "purchase_order"
 			order_doctype = "Purchase Order"
+			party_account.append(self.credit_to)
 
-		party_account = get_party_account(
-			party_type, party=party, company=self.company, include_advance=True
+		party_account.extend(
+			get_party_account(party_type, party=party, company=self.company, include_advance=True)
 		)
 
 		order_list = list(set(d.get(order_field) for d in self.get("items") if d.get(order_field)))
@@ -1292,10 +1331,12 @@ class AccountsController(TransactionBase):
 				# These are generated by Sales/Purchase Invoice during reconciliation and advance allocation.
 				# and below logic is only for such scenarios
 				if args:
+					precision = get_currency_precision()
 					for arg in args:
 						# Advance section uses `exchange_gain_loss` and reconciliation uses `difference_amount`
 						if (
-							arg.get("difference_amount", 0) != 0 or arg.get("exchange_gain_loss", 0) != 0
+							flt(arg.get("difference_amount", 0), precision) != 0
+							or flt(arg.get("exchange_gain_loss", 0), precision) != 0
 						) and arg.get("difference_account"):
 
 							party_account = arg.get("account")
@@ -1315,7 +1356,9 @@ class AccountsController(TransactionBase):
 								self.name,
 								arg.get("referenced_row"),
 							):
-								posting_date = frappe.db.get_value(arg.voucher_type, arg.voucher_no, "posting_date")
+								posting_date = arg.get("difference_posting_date") or frappe.db.get_value(
+									arg.voucher_type, arg.voucher_no, "posting_date"
+								)
 								je = create_gain_loss_journal(
 									self.company,
 									posting_date,
@@ -1399,7 +1442,7 @@ class AccountsController(TransactionBase):
 
 						je = create_gain_loss_journal(
 							self.company,
-							self.posting_date,
+							args.get("difference_posting_date") if args else self.posting_date,
 							self.party_type,
 							self.party,
 							party_account,
@@ -1847,7 +1890,7 @@ class AccountsController(TransactionBase):
 				(ple.against_voucher_type == self.doctype)
 				& (ple.against_voucher_no == self.name)
 				& (ple.party == party)
-				& (ple.docstatus == 1)
+				& (ple.delinked == 0)
 				& (ple.company == self.company)
 			)
 			.run(as_dict=True)
@@ -1861,7 +1904,10 @@ class AccountsController(TransactionBase):
 				advance_paid, precision=self.precision("advance_paid"), currency=advance.account_currency
 			)
 
-			frappe.db.set_value(self.doctype, self.name, "party_account_currency", advance.account_currency)
+			if advance.account_currency:
+				frappe.db.set_value(
+					self.doctype, self.name, "party_account_currency", advance.account_currency
+				)
 
 			if advance.account_currency == self.currency:
 				order_total = self.get("rounded_total") or self.grand_total
@@ -2409,27 +2455,20 @@ class AccountsController(TransactionBase):
 		doc_before_update = self.get_doc_before_save()
 		accounting_dimensions = get_accounting_dimensions() + ["cost_center", "project"]
 
-		# Check if opening entry check updated
-		needs_repost = doc_before_update.get("is_opening") != self.is_opening
+		# Parent Level Accounts excluding party account
+		fields_to_check += accounting_dimensions
+		for field in fields_to_check:
+			if doc_before_update.get(field) != self.get(field):
+				return True
 
-		if not needs_repost:
-			# Parent Level Accounts excluding party account
-			fields_to_check += accounting_dimensions
-			for field in fields_to_check:
-				if doc_before_update.get(field) != self.get(field):
-					needs_repost = 1
-					break
+		# Check for child tables
+		for table in child_tables:
+			if check_if_child_table_updated(
+				doc_before_update.get(table), self.get(table), child_tables[table]
+			):
+				return True
 
-			if not needs_repost:
-				# Check for child tables
-				for table in child_tables:
-					needs_repost = check_if_child_table_updated(
-						doc_before_update.get(table), self.get(table), child_tables[table]
-					)
-					if needs_repost:
-						break
-
-		return needs_repost
+		return False
 
 	@frappe.whitelist()
 	def repost_accounting_entries(self):
@@ -2661,13 +2700,19 @@ def get_advance_journal_entries(
 	else:
 		q = q.where(journal_acc.debit_in_account_currency > 0)
 
+	reference_or_condition = []
+
 	if include_unallocated:
-		q = q.where((journal_acc.reference_name.isnull()) | (journal_acc.reference_name == ""))
+		reference_or_condition.append(journal_acc.reference_name.isnull())
+		reference_or_condition.append(journal_acc.reference_name == "")
 
 	if order_list:
-		q = q.where(
+		reference_or_condition.append(
 			(journal_acc.reference_type == order_doctype) & ((journal_acc.reference_name).isin(order_list))
 		)
+
+	if reference_or_condition:
+		q = q.where(Criterion.any(reference_or_condition))
 
 	q = q.orderby(journal_entry.posting_date)
 
@@ -3455,15 +3500,12 @@ def update_child_qty_rate(parent_doctype, trans_items, parent_doctype_name, chil
 def check_if_child_table_updated(
 	child_table_before_update, child_table_after_update, fields_to_check
 ):
-	accounting_dimensions = get_accounting_dimensions() + ["cost_center", "project"]
-	# Check if any field affecting accounting entry is altered
-	for index, item in enumerate(child_table_after_update):
-		for field in fields_to_check:
-			if child_table_before_update[index].get(field) != item.get(field):
-				return True
+	fields_to_check = list(fields_to_check) + get_accounting_dimensions() + ["cost_center", "project"]
 
-		for dimension in accounting_dimensions:
-			if child_table_before_update[index].get(dimension) != item.get(dimension):
+	# Check if any field affecting accounting entry is altered
+	for index, item in enumerate(child_table_before_update):
+		for field in fields_to_check:
+			if child_table_after_update[index].get(field) != item.get(field):
 				return True
 
 	return False

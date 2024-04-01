@@ -461,6 +461,98 @@ class TestDeliveryNote(FrappeTestCase):
 
 		self.assertEqual(return_dn.items[0].incoming_rate, 150)
 
+	def test_sales_return_against_serial_batch_bundle(self):
+		frappe.db.set_single_value(
+			"Stock Settings", "do_not_update_serial_batch_on_creation_of_auto_bundle", 1
+		)
+
+		batch_item = make_item(
+			"Test Sales Return Against Batch Item",
+			properties={
+				"has_batch_no": 1,
+				"is_stock_item": 1,
+				"create_new_batch": 1,
+				"batch_number_series": "BATCH-TSRABII.#####",
+			},
+		).name
+
+		serial_item = make_item(
+			"Test Sales Return Against Serial NO Item",
+			properties={
+				"has_serial_no": 1,
+				"is_stock_item": 1,
+				"serial_no_series": "SN-TSRABII.#####",
+			},
+		).name
+
+		make_stock_entry(item_code=batch_item, target="_Test Warehouse - _TC", qty=5, basic_rate=100)
+		make_stock_entry(item_code=serial_item, target="_Test Warehouse - _TC", qty=5, basic_rate=100)
+
+		dn = create_delivery_note(
+			item_code=batch_item,
+			qty=5,
+			rate=500,
+			warehouse="_Test Warehouse - _TC",
+			expense_account="Cost of Goods Sold - _TC",
+			cost_center="Main - _TC",
+			use_serial_batch_fields=0,
+			do_not_submit=1,
+		)
+
+		dn.append(
+			"items",
+			{
+				"item_code": serial_item,
+				"qty": 5,
+				"rate": 500,
+				"warehouse": "_Test Warehouse - _TC",
+				"expense_account": "Cost of Goods Sold - _TC",
+				"cost_center": "Main - _TC",
+				"use_serial_batch_fields": 0,
+			},
+		)
+
+		dn.save()
+		for row in dn.items:
+			self.assertFalse(row.use_serial_batch_fields)
+
+		dn.submit()
+		dn.reload()
+		for row in dn.items:
+			self.assertTrue(row.serial_and_batch_bundle)
+			self.assertFalse(row.use_serial_batch_fields)
+			self.assertFalse(row.serial_no)
+			self.assertFalse(row.batch_no)
+
+		from erpnext.controllers.sales_and_purchase_return import make_return_doc
+
+		return_dn = make_return_doc(dn.doctype, dn.name)
+		for row in return_dn.items:
+			row.qty = -2
+			row.use_serial_batch_fields = 0
+		return_dn.save().submit()
+
+		for row in return_dn.items:
+			total_qty = frappe.db.get_value(
+				"Serial and Batch Bundle", row.serial_and_batch_bundle, "total_qty"
+			)
+
+			self.assertEqual(total_qty, 2)
+
+			doc = frappe.get_doc("Serial and Batch Bundle", row.serial_and_batch_bundle)
+			if doc.has_serial_no:
+				self.assertEqual(len(doc.entries), 2)
+
+			for entry in doc.entries:
+				if doc.has_batch_no:
+					self.assertEqual(entry.qty, 2)
+				else:
+					self.assertEqual(entry.qty, 1)
+
+		frappe.db.set_single_value(
+			"Stock Settings", "do_not_update_serial_batch_on_creation_of_auto_bundle", 0
+		)
+
 	def test_return_single_item_from_bundled_items(self):
 		company = frappe.db.get_value("Warehouse", "Stores - TCP1", "company")
 
@@ -813,6 +905,15 @@ class TestDeliveryNote(FrappeTestCase):
 		dn.cancel()
 		self.assertEqual(dn.status, "Cancelled")
 
+	def test_sales_order_reference_validation(self):
+		so = make_sales_order(po_no="12345")
+		dn = create_dn_against_so(so.name, delivered_qty=2, do_not_submit=True)
+		dn.items[0].against_sales_order = None
+		self.assertRaises(frappe.ValidationError, dn.save)
+		dn.reload()
+		dn.items[0].so_detail = None
+		self.assertRaises(frappe.ValidationError, dn.save)
+
 	def test_dn_billing_status_case1(self):
 		# SO -> DN -> SI
 		so = make_sales_order(po_no="12345")
@@ -1088,9 +1189,30 @@ class TestDeliveryNote(FrappeTestCase):
 		dn.load_from_db()
 
 		batch_no = get_batch_from_bundle(dn.packed_items[0].serial_and_batch_bundle)
+		packed_name = dn.packed_items[0].name
 		self.assertTrue(batch_no)
 
+		dn.cancel()
+
+		# Cancel the reposting entry
+		reposting_entries = frappe.get_all("Repost Item Valuation", filters={"docstatus": 1})
+		for entry in reposting_entries:
+			doc = frappe.get_doc("Repost Item Valuation", entry.name)
+			doc.cancel()
+			doc.delete()
+
+		frappe.db.set_single_value("Accounts Settings", "delete_linked_ledger_entries", 1)
+
+		dn.reload()
+		dn.delete()
+
+		bundle = frappe.db.get_value(
+			"Serial and Batch Bundle", {"voucher_detail_no": packed_name}, "name"
+		)
+		self.assertFalse(bundle)
+
 		frappe.db.set_single_value("Stock Settings", "use_serial_batch_fields", 1)
+		frappe.db.set_single_value("Accounts Settings", "delete_linked_ledger_entries", 0)
 
 	def test_payment_terms_are_fetched_when_creating_sales_invoice(self):
 		from erpnext.accounts.doctype.payment_entry.test_payment_entry import (

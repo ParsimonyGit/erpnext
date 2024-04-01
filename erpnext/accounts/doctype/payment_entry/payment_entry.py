@@ -389,7 +389,10 @@ class PaymentEntry(AccountsController):
 		)
 
 	def set_missing_ref_details(
-		self, force: bool = False, update_ref_details_only_for: list | None = None
+		self,
+		force: bool = False,
+		update_ref_details_only_for: list | None = None,
+		ref_exchange_rate: float | None = None,
 	) -> None:
 		for d in self.get("references"):
 			if d.allocated_amount:
@@ -401,6 +404,10 @@ class PaymentEntry(AccountsController):
 				ref_details = get_reference_details(
 					d.reference_doctype, d.reference_name, self.party_account_currency
 				)
+
+				# Only update exchange rate when the reference is Journal Entry
+				if ref_exchange_rate and d.reference_doctype == "Journal Entry":
+					ref_details.update({"exchange_rate": ref_exchange_rate})
 
 				for field, value in ref_details.items():
 					if d.exchange_gain_loss:
@@ -521,9 +528,9 @@ class PaymentEntry(AccountsController):
 
 	def get_valid_reference_doctypes(self):
 		if self.party_type == "Customer":
-			return ("Sales Order", "Sales Invoice", "Journal Entry", "Dunning")
+			return ("Sales Order", "Sales Invoice", "Journal Entry", "Dunning", "Payment Entry")
 		elif self.party_type == "Supplier":
-			return ("Purchase Order", "Purchase Invoice", "Journal Entry")
+			return ("Purchase Order", "Purchase Invoice", "Journal Entry", "Payment Entry")
 		elif self.party_type == "Shareholder":
 			return ("Journal Entry",)
 		elif self.party_type == "Employee":
@@ -1180,7 +1187,14 @@ class PaymentEntry(AccountsController):
 				references = [x for x in self.get("references") if x.name == entry.name]
 
 			for ref in references:
-				if ref.reference_doctype in ("Sales Invoice", "Purchase Invoice", "Journal Entry"):
+				if ref.reference_doctype in (
+					"Sales Invoice",
+					"Purchase Invoice",
+					"Journal Entry",
+					"Sales Order",
+					"Purchase Order",
+					"Payment Entry",
+				):
 					self.add_advance_gl_for_reference(gl_entries, ref)
 
 	def add_advance_gl_for_reference(self, gl_entries, invoice):
@@ -1194,14 +1208,17 @@ class PaymentEntry(AccountsController):
 			"voucher_detail_no": invoice.name,
 		}
 
-		posting_date = frappe.db.get_value(
-			invoice.reference_doctype, invoice.reference_name, "posting_date"
-		)
+		date_field = "posting_date"
+		if invoice.reference_doctype in ["Sales Order", "Purchase Order"]:
+			date_field = "transaction_date"
+		posting_date = frappe.db.get_value(invoice.reference_doctype, invoice.reference_name, date_field)
 
 		if getdate(posting_date) < getdate(self.posting_date):
 			posting_date = self.posting_date
 
-		dr_or_cr = "credit" if invoice.reference_doctype == "Sales Invoice" else "debit"
+		dr_or_cr = (
+			"credit" if invoice.reference_doctype in ["Sales Invoice", "Payment Entry"] else "debit"
+		)
 		args_dict["account"] = invoice.account
 		args_dict[dr_or_cr] = invoice.allocated_amount
 		args_dict[dr_or_cr + "_in_account_currency"] = invoice.allocated_amount
@@ -1648,7 +1665,7 @@ def get_outstanding_reference_documents(args, validate=False):
 		outstanding_invoices = get_outstanding_invoices(
 			args.get("party_type"),
 			args.get("party"),
-			party_account,
+			[party_account],
 			common_filter=common_filter,
 			posting_date=posting_and_due_date,
 			min_outstanding=args.get("outstanding_amt_greater_than"),
@@ -2103,6 +2120,11 @@ def get_reference_details(reference_doctype, reference_name, party_account_curre
 		else:
 			outstanding_amount = flt(total_amount) - flt(ref_doc.get("advance_paid"))
 
+		if reference_doctype in ["Sales Order", "Purchase Order"]:
+			party_type = "Customer" if reference_doctype == "Sales Order" else "Supplier"
+			party_field = "customer" if reference_doctype == "Sales Order" else "supplier"
+			party = ref_doc.get(party_field)
+			account = get_party_account(party_type, party, ref_doc.company)
 	else:
 		# Get the exchange rate based on the posting date of the ref doc.
 		exchange_rate = get_exchange_rate(party_account_currency, company_currency, ref_doc.posting_date)
