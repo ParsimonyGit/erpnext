@@ -57,6 +57,7 @@ class Asset(AccountsController):
 		self.validate_in_use_date()
 		self.set_status()
 		self.make_asset_movement()
+		self.reload()
 		if not self.booked_fixed_asset and self.validate_make_gl_entry():
 			self.make_gl_entries()
 
@@ -64,6 +65,7 @@ class Asset(AccountsController):
 		self.validate_cancellation()
 		self.cancel_movement_entries()
 		self.cancel_capitalization()
+		self.reload()
 		self.delete_depreciation_entries()
 		self.set_status()
 		self.ignore_linked_doctypes = ("GL Entry", "Stock Ledger Entry")
@@ -428,7 +430,7 @@ class Asset(AccountsController):
 					schedule_date = get_last_day(schedule_date)
 
 			# if asset is being sold
-			if date_of_disposal:
+			if date_of_disposal and getdate(schedule_date) >= getdate(date_of_disposal):
 				from_date = self.get_from_date_for_disposal(finance_book)
 				depreciation_amount, days, months = self.get_pro_rata_amt(
 					finance_book,
@@ -513,14 +515,15 @@ class Asset(AccountsController):
 			)
 
 			# Adjust depreciation amount in the last period based on the expected value after useful life
-			if finance_book.expected_value_after_useful_life and (
-				(
-					n == cint(final_number_of_depreciations) - 1
-					and value_after_depreciation != finance_book.expected_value_after_useful_life
-				)
-				or value_after_depreciation < finance_book.expected_value_after_useful_life
+			if (
+				n == cint(final_number_of_depreciations) - 1
+				and flt(value_after_depreciation) != flt(finance_book.expected_value_after_useful_life)
+			) or flt(value_after_depreciation) < flt(
+				finance_book.expected_value_after_useful_life
 			):
-				depreciation_amount += value_after_depreciation - finance_book.expected_value_after_useful_life
+				depreciation_amount += flt(value_after_depreciation) - flt(
+					finance_book.expected_value_after_useful_life
+				)
 				skip_row = True
 
 			if flt(depreciation_amount, self.precision("gross_purchase_amount")) > 0:
@@ -1008,7 +1011,9 @@ class Asset(AccountsController):
 		fixed_asset_account, cwip_account = self.get_fixed_asset_account(), self.get_cwip_account()
 
 		if (
-			purchase_document and self.purchase_receipt_amount and self.available_for_use_date <= nowdate()
+			purchase_document
+			and self.purchase_receipt_amount
+			and getdate(self.available_for_use_date) <= getdate()
 		):
 
 			gl_entries.append(

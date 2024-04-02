@@ -10,7 +10,7 @@ import frappe.defaults
 from frappe import _, qb, throw
 from frappe.model.meta import get_field_precision
 from frappe.query_builder import AliasedQuery, Criterion, Table
-from frappe.query_builder.functions import Sum
+from frappe.query_builder.functions import Round, Sum
 from frappe.query_builder.utils import DocType
 from frappe.utils import (
 	cint,
@@ -549,16 +549,19 @@ def check_if_advance_entry_modified(args):
 				args,
 			)
 		else:
-			ret = frappe.db.sql(
-				"""select name from `tabPayment Entry`
-				where
-					name = %(voucher_no)s and docstatus = 1
-					and party_type = %(party_type)s and party = %(party)s and {0} = %(account)s
-					and round(unallocated_amount, {1}) = round(%(unreconciled_amount)s, {1})
-			""".format(
-					party_account_field, precision
-				),
-				args,
+			pe = qb.DocType("Payment Entry")
+			ret = (
+				qb.from_(pe)
+				.select(pe.name)
+				.where(
+					(pe.name == args.voucher_no)
+					& (pe.docstatus == 1)
+					& (pe.party_type == args.party_type)
+					& (pe.party == args.party)
+					& (pe[party_account_field] == args.account)
+					& (Round(pe.unallocated_amount, precision) == Round(args.unreconciled_amount, precision))
+				)
+				.run()
 			)
 
 	if not ret:
@@ -679,7 +682,7 @@ def update_reference_in_payment_entry(
 	payment_entry.setup_party_account_field()
 	payment_entry.set_missing_values()
 	if not skip_ref_details_update_for_pe:
-		payment_entry.set_missing_ref_details()
+		payment_entry.set_missing_ref_details(ref_exchange_rate=d.exchange_rate or None)
 	payment_entry.set_amounts()
 
 	payment_entry.make_exchange_gain_loss_journal(
@@ -1369,8 +1372,7 @@ def sort_stock_vouchers_by_posting_date(
 		.select(sle.voucher_type, sle.voucher_no, sle.posting_date, sle.posting_time, sle.creation)
 		.where((sle.is_cancelled == 0) & (sle.voucher_no.isin(voucher_nos)))
 		.groupby(sle.voucher_type, sle.voucher_no)
-		.orderby(sle.posting_date)
-		.orderby(sle.posting_time)
+		.orderby(sle.posting_datetime)
 		.orderby(sle.creation)
 	).run(as_dict=True)
 	sorted_vouchers = [(sle.voucher_type, sle.voucher_no) for sle in sles]
