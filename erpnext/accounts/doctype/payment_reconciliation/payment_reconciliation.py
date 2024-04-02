@@ -340,10 +340,15 @@ class PaymentReconciliation(Document):
 
 		self.build_qb_filter_conditions(get_invoices=True)
 
+		accounts = [self.receivable_payable_account]
+
+		if self.default_advance_account:
+			accounts.append(self.default_advance_account)
+
 		non_reconciled_invoices = get_outstanding_invoices(
 			self.party_type,
 			self.party,
-			self.receivable_payable_account,
+			accounts,
 			common_filter=self.common_filter_conditions,
 			posting_date=self.ple_posting_date_filter,
 			min_outstanding=self.minimum_invoice_amount if self.minimum_invoice_amount else None,
@@ -441,6 +446,7 @@ class PaymentReconciliation(Document):
 				res.difference_amount = self.get_difference_amount(pay, inv, res["allocated_amount"])
 				res.difference_account = default_exchange_gain_loss_account
 				res.exchange_rate = inv.get("exchange_rate")
+				res.update({"gain_loss_posting_date": pay.get("posting_date")})
 
 				if pay.get("amount") == 0:
 					entries.append(res)
@@ -557,6 +563,7 @@ class PaymentReconciliation(Document):
 				"allocated_amount": flt(row.get("allocated_amount")),
 				"difference_amount": flt(row.get("difference_amount")),
 				"difference_account": row.get("difference_account"),
+				"difference_posting_date": row.get("gain_loss_posting_date"),
 				"cost_center": row.get("cost_center"),
 			}
 		)
@@ -631,7 +638,12 @@ class PaymentReconciliation(Document):
 			journals_map = frappe._dict(
 				frappe.db.get_all(
 					"Journal Entry Account",
-					filters={"parent": ("in", journals), "account": ("in", [self.receivable_payable_account])},
+					filters={
+						"parent": ("in", journals),
+						"account": ("in", [self.receivable_payable_account]),
+						"party_type": self.party_type,
+						"party": self.party,
+					},
 					fields=[
 						"parent as `name`",
 						"exchange_rate",

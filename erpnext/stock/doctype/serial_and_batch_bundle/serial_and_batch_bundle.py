@@ -273,7 +273,8 @@ class SerialandBatchBundle(Document):
 
 	def validate_negative_batch(self, batch_no, available_qty):
 		if available_qty < 0:
-			msg = f"""Batch No {bold(batch_no)} has negative stock
+			msg = f"""Batch No {bold(batch_no)} of an Item {bold(self.item_code)}
+				has negative stock
 				of quantity {bold(available_qty)} in the
 				warehouse {self.warehouse}"""
 
@@ -332,13 +333,8 @@ class SerialandBatchBundle(Document):
 			rate = frappe.db.get_value(child_table, self.voucher_detail_no, valuation_field)
 
 		for d in self.entries:
-			if not rate or (
-				flt(rate, precision) == flt(d.incoming_rate, precision) and d.stock_value_difference
-			):
-				continue
-
 			d.incoming_rate = flt(rate, precision)
-			if self.has_batch_no:
+			if d.qty:
 				d.stock_value_difference = flt(d.qty) * flt(d.incoming_rate)
 
 			if save:
@@ -389,6 +385,9 @@ class SerialandBatchBundle(Document):
 		if self.docstatus == 0:
 			self.set_incoming_rate(save=True, row=row)
 
+		if self.docstatus == 0 and parent.get("is_return") and parent.is_new():
+			self.reset_qty(row, qty_field=qty_field)
+
 		self.calculate_qty_and_amount(save=True)
 		self.validate_quantity(row, qty_field=qty_field)
 		self.set_warranty_expiry_date()
@@ -422,7 +421,11 @@ class SerialandBatchBundle(Document):
 		if not (self.voucher_type and self.voucher_no):
 			return
 
-		if self.voucher_no and not frappe.db.exists(self.voucher_type, self.voucher_no):
+		if (
+			self.docstatus == 1
+			and self.voucher_no
+			and not frappe.db.exists(self.voucher_type, self.voucher_no)
+		):
 			self.throw_error_message(f"The {self.voucher_type} # {self.voucher_no} does not exist")
 
 		if self.flags.ignore_voucher_validation:
@@ -486,24 +489,57 @@ class SerialandBatchBundle(Document):
 
 			frappe.throw(_(msg), title=_(title), exc=SerialNoExistsInFutureTransactionError)
 
+	def reset_qty(self, row, qty_field=None):
+		qty_field = self.get_qty_field(row, qty_field=qty_field)
+		qty = abs(row.get(qty_field))
+
+		idx = None
+		while qty > 0:
+			for d in self.entries:
+				row_qty = abs(d.qty)
+				if row_qty >= qty:
+					d.db_set("qty", qty if self.type_of_transaction == "Inward" else qty * -1)
+					qty = 0
+					idx = d.idx
+					break
+				else:
+					qty -= row_qty
+					idx = d.idx
+
+		if idx and len(self.entries) > idx:
+			remove_rows = []
+			for d in self.entries:
+				if d.idx > idx:
+					remove_rows.append(d)
+
+			for d in remove_rows:
+				self.entries.remove(d)
+
+			self.flags.ignore_links = True
+			self.save()
+
 	def validate_quantity(self, row, qty_field=None):
+		qty_field = self.get_qty_field(row, qty_field=qty_field)
+		qty = row.get(qty_field)
+		if qty_field == "qty" and row.get("stock_qty"):
+			qty = row.get("stock_qty")
+
+		precision = row.precision
+		if abs(abs(flt(self.total_qty, precision)) - abs(flt(qty, precision))) > 0.01:
+			self.throw_error_message(
+				f"Total quantity {abs(flt(self.total_qty))} in the Serial and Batch Bundle {bold(self.name)} does not match with the quantity {abs(flt(row.get(qty_field)))} for the Item {bold(self.item_code)} in the {self.voucher_type} # {self.voucher_no}"
+			)
+
+	def get_qty_field(self, row, qty_field=None) -> str:
 		if not qty_field:
 			qty_field = "qty"
 
-		precision = row.precision
 		if row.get("doctype") == "Subcontracting Receipt Supplied Item":
 			qty_field = "consumed_qty"
 		elif row.get("doctype") == "Stock Entry Detail":
 			qty_field = "transfer_qty"
 
-		qty = row.get(qty_field)
-		if qty_field == "qty" and row.get("stock_qty"):
-			qty = row.get("stock_qty")
-
-		if abs(abs(flt(self.total_qty, precision)) - abs(flt(qty, precision))) > 0.01:
-			self.throw_error_message(
-				f"Total quantity {abs(flt(self.total_qty))} in the Serial and Batch Bundle {bold(self.name)} does not match with the quantity {abs(flt(row.get(qty_field)))} for the Item {bold(self.item_code)} in the {self.voucher_type} # {self.voucher_no}"
-			)
+		return qty_field
 
 	def set_is_outward(self):
 		for row in self.entries:
@@ -783,6 +819,10 @@ class SerialandBatchBundle(Document):
 			or_filters=or_filters,
 		)
 
+		if not vouchers and self.voucher_type == "Delivery Note":
+			frappe.db.set_value("Packed Item", self.voucher_detail_no, "serial_and_batch_bundle", None)
+			return
+
 		for voucher in vouchers:
 			if voucher.get("current_serial_and_batch_bundle"):
 				frappe.db.set_value(self.child_table, voucher.name, "current_serial_and_batch_bundle", None)
@@ -806,6 +846,7 @@ class SerialandBatchBundle(Document):
 		self.set_purchase_document_no()
 
 	def on_submit(self):
+		self.validate_batch_inventory()
 		self.validate_serial_nos_inventory()
 
 	def set_purchase_document_no(self):
@@ -832,6 +873,13 @@ class SerialandBatchBundle(Document):
 		if not self.has_batch_no:
 			return
 
+		if (
+			self.voucher_type == "Stock Reconciliation"
+			and self.type_of_transaction == "Outward"
+			and frappe.db.get_value("Stock Reconciliation Item", self.voucher_detail_no, "qty") > 0
+		):
+			return
+
 		batches = [d.batch_no for d in self.entries if d.batch_no]
 		if not batches:
 			return
@@ -852,7 +900,7 @@ class SerialandBatchBundle(Document):
 
 		available_batches = get_available_batches_qty(available_batches)
 		for batch_no in batches:
-			if batch_no not in available_batches or available_batches[batch_no] < 0:
+			if batch_no in available_batches and available_batches[batch_no] < 0:
 				if flt(available_batches.get(batch_no)) < 0:
 					self.validate_negative_batch(batch_no, available_batches[batch_no])
 
@@ -1267,6 +1315,13 @@ def get_type_of_transaction(parent_doc, child_row):
 
 	if parent_doc.get("is_return"):
 		type_of_transaction = "Inward" if type_of_transaction == "Outward" else "Outward"
+
+	if parent_doc.get("doctype") == "Subcontracting Receipt":
+		type_of_transaction = "Outward"
+		if child_row.get("doctype") == "Subcontracting Receipt Item":
+			type_of_transaction = "Inward"
+	elif parent_doc.get("doctype") == "Stock Reconciliation":
+		type_of_transaction = "Inward"
 
 	return type_of_transaction
 
@@ -2118,7 +2173,7 @@ def is_serial_batch_no_exists(item_code, type_of_transaction, serial_no=None, ba
 
 		make_serial_no(serial_no, item_code)
 
-	if batch_no and frappe.db.exists("Batch", batch_no):
+	if batch_no and not frappe.db.exists("Batch", batch_no):
 		if type_of_transaction != "Inward":
 			frappe.throw(_("Batch No {0} does not exists").format(batch_no))
 
