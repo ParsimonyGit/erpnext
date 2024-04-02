@@ -86,6 +86,10 @@ class PurchaseOrder(BuyingController):
 		self.reset_default_field_value("set_warehouse", "items", "warehouse")
 
 	def validate_with_previous_doc(self):
+		mri_compare_fields = [["project", "="], ["item_code", "="]]
+		if self.is_subcontracted:
+			mri_compare_fields = [["project", "="]]
+
 		super(PurchaseOrder, self).validate_with_previous_doc(
 			{
 				"Supplier Quotation": {
@@ -108,7 +112,7 @@ class PurchaseOrder(BuyingController):
 				},
 				"Material Request Item": {
 					"ref_dn_field": "material_request_item",
-					"compare_fields": [["project", "="], ["item_code", "="]],
+					"compare_fields": mri_compare_fields,
 					"is_child_table": True,
 				},
 			}
@@ -282,23 +286,6 @@ class PurchaseOrder(BuyingController):
 				check_list.append(d.material_request)
 				check_on_hold_or_closed_status("Material Request", d.material_request)
 
-	def update_requested_qty(self):
-		material_request_map = {}
-		for d in self.get("items"):
-			if d.material_request_item:
-				material_request_map.setdefault(d.material_request, []).append(d.material_request_item)
-
-		for mr, mr_item_rows in material_request_map.items():
-			if mr and mr_item_rows:
-				mr_obj = frappe.get_doc("Material Request", mr)
-
-				if mr_obj.status in ["Stopped", "Cancelled"]:
-					frappe.throw(
-						_("Material Request {0} is cancelled or stopped").format(mr), frappe.InvalidStatusError
-					)
-
-				mr_obj.update_requested_qty(mr_item_rows)
-
 	def update_ordered_qty(self, po_item_rows=None):
 		"""update requested qty (before ordered_qty is updated)"""
 		item_wh_list = []
@@ -330,6 +317,7 @@ class PurchaseOrder(BuyingController):
 		self.update_requested_qty()
 		self.update_ordered_qty()
 		self.update_reserved_qty_for_subcontract()
+		self.update_blanket_order()
 		self.notify_update()
 		clear_doctype_notifications(self)
 
@@ -340,7 +328,9 @@ class PurchaseOrder(BuyingController):
 			self.update_status_updater()
 
 		self.update_prevdoc_status()
-		self.update_requested_qty()
+		if not self.is_subcontracted or self.is_old_subcontracting_flow:
+			self.update_requested_qty()
+
 		self.update_ordered_qty()
 		self.validate_budget()
 		self.update_reserved_qty_for_subcontract()
@@ -372,7 +362,9 @@ class PurchaseOrder(BuyingController):
 
 		# Must be called after updating ordered qty in Material Request
 		# bin uses Material Request Items to recalculate & update
-		self.update_requested_qty()
+		if not self.is_subcontracted or self.is_old_subcontracting_flow:
+			self.update_requested_qty()
+
 		self.update_ordered_qty()
 
 		self.update_blanket_order()
@@ -450,7 +442,22 @@ class PurchaseOrder(BuyingController):
 		else:
 			self.db_set("per_received", 0, update_modified=False)
 
+	def update_ordered_qty_in_so_for_removed_items(self, removed_items):
+		"""
+		Updates ordered_qty in linked SO when item rows are removed using Update Items
+		"""
+		if not self.is_against_so():
+			return
+		for item in removed_items:
+			prev_ordered_qty = frappe.get_cached_value(
+				"Sales Order Item", item.get("sales_order_item"), "ordered_qty"
+			)
+			frappe.db.set_value(
+				"Sales Order Item", item.get("sales_order_item"), "ordered_qty", prev_ordered_qty - item.qty
+			)
 
+
+@frappe.request_cache
 def item_last_purchase_rate(name, conversion_rate, item_code, conversion_factor=1.0):
 	"""get last purchase rate for an item"""
 
@@ -522,6 +529,9 @@ def make_purchase_receipt(source_name, target_doc=None):
 					"bom": "bom",
 					"material_request": "material_request",
 					"material_request_item": "material_request_item",
+					"sales_order": "sales_order",
+					"sales_order_item": "sales_order_item",
+					"wip_composite_asset": "wip_composite_asset",
 				},
 				"postprocess": update_item,
 				"condition": lambda doc: abs(doc.received_qty) < abs(doc.qty)
@@ -532,8 +542,6 @@ def make_purchase_receipt(source_name, target_doc=None):
 		target_doc,
 		set_missing_values,
 	)
-
-	doc.set_onload("ignore_price_list", True)
 
 	return doc
 
@@ -598,6 +606,7 @@ def get_mapped_purchase_invoice(source_name, target_doc=None, ignore_permissions
 			"field_map": {
 				"name": "po_detail",
 				"parent": "purchase_order",
+				"wip_composite_asset": "wip_composite_asset",
 			},
 			"postprocess": update_item,
 			"condition": lambda doc: (doc.base_amount == 0 or abs(doc.billed_amt) < abs(doc.amount)),
@@ -613,7 +622,6 @@ def get_mapped_purchase_invoice(source_name, target_doc=None, ignore_permissions
 		postprocess,
 		ignore_permissions=ignore_permissions,
 	)
-	doc.set_onload("ignore_price_list", True)
 
 	return doc
 
@@ -675,7 +683,10 @@ def get_mapped_subcontracting_order(source_name, target_doc=None):
 			},
 			"Purchase Order Item": {
 				"doctype": "Subcontracting Order Service Item",
-				"field_map": {},
+				"field_map": {
+					"material_request": "material_request",
+					"material_request_item": "material_request_item",
+				},
 				"field_no_map": [],
 			},
 		},
@@ -701,8 +712,8 @@ def get_mapped_subcontracting_order(source_name, target_doc=None):
 
 @frappe.whitelist()
 def is_subcontracting_order_created(po_name) -> bool:
-	count = frappe.db.count(
-		"Subcontracting Order", {"purchase_order": po_name, "status": ["not in", ["Draft", "Cancelled"]]}
+	return (
+		True
+		if frappe.db.exists("Subcontracting Order", {"purchase_order": po_name, "docstatus": ["=", 1]})
+		else False
 	)
-
-	return True if count else False

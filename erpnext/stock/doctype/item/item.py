@@ -280,7 +280,7 @@ class Item(Document):
 
 		# add item taxes from template
 		for d in template.get("taxes"):
-			self.append("taxes", {"item_tax_template": d.item_tax_template})
+			self.append("taxes", d)
 
 		# copy re-order table if empty
 		if not self.get("reorder_levels"):
@@ -542,8 +542,12 @@ class Item(Document):
 
 	def validate_duplicate_product_bundles_before_merge(self, old_name, new_name):
 		"Block merge if both old and new items have product bundles."
-		old_bundle = frappe.get_value("Product Bundle", filters={"new_item_code": old_name})
-		new_bundle = frappe.get_value("Product Bundle", filters={"new_item_code": new_name})
+		old_bundle = frappe.get_value(
+			"Product Bundle", filters={"new_item_code": old_name, "disabled": 0}
+		)
+		new_bundle = frappe.get_value(
+			"Product Bundle", filters={"new_item_code": new_name, "disabled": 0}
+		)
 
 		if old_bundle and new_bundle:
 			bundle_link = get_link_to_form("Product Bundle", old_bundle)
@@ -1043,6 +1047,7 @@ def validate_cancelled_item(item_code, docstatus=None):
 		frappe.throw(_("Item {0} is cancelled").format(item_code))
 
 
+@frappe.request_cache
 def get_last_purchase_details(item_code, doc_name=None, conversion_rate=1.0):
 	"""returns last purchase details in stock uom"""
 	# get last purchase order item details

@@ -312,7 +312,7 @@ class TestStockReconciliation(FrappeTestCase, StockTestMixin):
 		sr.cancel()
 
 		self.assertEqual(frappe.db.get_value("Serial No", serial_nos[0], "status"), "Inactive")
-		self.assertEqual(frappe.db.exists("Batch", batch_no), None)
+		self.assertTrue(frappe.db.exists("Batch", batch_no))
 
 	def test_stock_reco_balance_qty_for_serial_and_batch_item(self):
 		from erpnext.stock.doctype.stock_entry.stock_entry_utils import make_stock_entry
@@ -702,6 +702,7 @@ class TestStockReconciliation(FrappeTestCase, StockTestMixin):
 		self.assertEqual(flt(sl_entry.actual_qty), 1.0)
 		self.assertEqual(flt(sl_entry.qty_after_transaction), 1.0)
 
+	@change_settings("Stock Reposting Settings", {"item_based_reposting": 0})
 	def test_backdated_stock_reco_entry(self):
 		from erpnext.stock.doctype.stock_entry.test_stock_entry import make_stock_entry
 
@@ -1007,6 +1008,120 @@ class TestStockReconciliation(FrappeTestCase, StockTestMixin):
 		)
 
 		self.assertEqual(sr2.docstatus, 1)
+
+	def test_current_qty_and_current_serial_no_count(self):
+		# Step - 1: Create a Serial Batch Item
+		item = self.make_item(
+			properties={
+				"is_stock_item": 1,
+				"has_serial_no": 1,
+				"serial_no_series": "TEST-SERIAL-.###",
+				"has_batch_no": 1,
+				"create_new_batch": 1,
+				"batch_number_series": "TEST-BATCH-.###",
+			}
+		).name
+
+		# Step - 2: Inward stock in multiple Batches
+		from erpnext.stock.doctype.stock_entry.test_stock_entry import make_stock_entry
+
+		se1 = make_stock_entry(
+			item_code=item,
+			target="_Test Warehouse - _TC",
+			qty=10,
+		)
+		se2 = make_stock_entry(
+			item_code=item,
+			target="_Test Warehouse - _TC",
+			qty=5,
+		)
+
+		# Step - 3: Create Stock Reconciliation
+		sr = create_stock_reconciliation(
+			item_code=item,
+			warehouse="_Test Warehouse - _TC",
+			qty=0,
+			batch_no=se1.items[0].batch_no,
+			do_not_submit=True,
+		)
+
+		# Test - 1: Current Serial No Count should be equal to Current Qty
+		self.assertEqual(sr.items[0].current_qty, se1.items[0].qty)
+		self.assertEqual(len(sr.items[0].current_serial_no.split("\n")), sr.items[0].current_qty)
+
+		sr.items[0].batch_no = se2.items[0].batch_no
+		sr.save()
+
+		self.assertEqual(sr.items[0].current_qty, se2.items[0].qty)
+		self.assertEqual(len(sr.items[0].current_serial_no.split("\n")), sr.items[0].current_qty)
+
+	def test_backdated_purchase_receipt_with_stock_reco(self):
+		item_code = self.make_item(
+			properties={
+				"is_stock_item": 1,
+				"has_serial_no": 1,
+				"serial_no_series": "TEST-SERIAL-.###",
+			}
+		).name
+
+		warehouse = "_Test Warehouse - _TC"
+
+		# Step - 1: Create a Backdated Purchase Receipt
+
+		pr1 = make_purchase_receipt(
+			item_code=item_code, warehouse=warehouse, qty=10, rate=100, posting_date=add_days(nowdate(), -3)
+		)
+		pr1.reload()
+
+		serial_nos = sorted(get_serial_nos(pr1.items[0].serial_no))[:5]
+
+		# Step - 2: Create a Stock Reconciliation
+		sr1 = create_stock_reconciliation(
+			item_code=item_code,
+			warehouse=warehouse,
+			qty=5,
+			serial_no="\n".join(serial_nos),
+		)
+
+		data = frappe.get_all(
+			"Stock Ledger Entry",
+			fields=["serial_no", "actual_qty", "stock_value_difference"],
+			filters={"voucher_no": sr1.name, "is_cancelled": 0},
+			order_by="creation",
+		)
+
+		for d in data:
+			if d.actual_qty < 0:
+				self.assertEqual(d.actual_qty, -10.0)
+				self.assertAlmostEqual(d.stock_value_difference, -1000.0)
+			else:
+				self.assertEqual(d.actual_qty, 5.0)
+				self.assertAlmostEqual(d.stock_value_difference, 500.0)
+
+		# Step - 3: Create a Purchase Receipt before the first Purchase Receipt
+		make_purchase_receipt(
+			item_code=item_code, warehouse=warehouse, qty=10, rate=200, posting_date=add_days(nowdate(), -5)
+		)
+
+		data = frappe.get_all(
+			"Stock Ledger Entry",
+			fields=["serial_no", "actual_qty", "stock_value_difference"],
+			filters={"voucher_no": sr1.name, "is_cancelled": 0},
+			order_by="creation",
+		)
+
+		for d in data:
+			if d.actual_qty < 0:
+				self.assertEqual(d.actual_qty, -20.0)
+				self.assertAlmostEqual(d.stock_value_difference, -3000.0)
+			else:
+				self.assertEqual(d.actual_qty, 5.0)
+				self.assertAlmostEqual(d.stock_value_difference, 500.0)
+
+		active_serial_no = frappe.get_all(
+			"Serial No", filters={"status": "Active", "item_code": item_code}
+		)
+		self.assertEqual(len(active_serial_no), 5)
 
 
 def create_batch_item_with_batch(item_name, batch_id):

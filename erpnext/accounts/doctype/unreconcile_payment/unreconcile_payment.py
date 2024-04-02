@@ -15,7 +15,7 @@ from erpnext.accounts.utils import (
 )
 
 
-class UnreconcilePayments(Document):
+class UnreconcilePayment(Document):
 	def validate(self):
 		self.supported_types = ["Payment Entry", "Journal Entry"]
 		if not self.voucher_type in self.supported_types:
@@ -63,6 +63,9 @@ class UnreconcilePayments(Document):
 			update_voucher_outstanding(
 				alloc.reference_doctype, alloc.reference_name, alloc.account, alloc.party_type, alloc.party
 			)
+			if doc.doctype in frappe.get_hooks("advance_payment_doctypes"):
+				doc.set_total_advance_paid()
+
 			frappe.db.set_value("Unreconcile Payment Entries", alloc.name, "unlinked", True)
 
 
@@ -142,7 +145,7 @@ def create_unreconcile_doc_for_selection(selections=None):
 		selections = frappe.json.loads(selections)
 		# assuming each row is a unique voucher
 		for row in selections:
-			unrecon = frappe.new_doc("Unreconcile Payments")
+			unrecon = frappe.new_doc("Unreconcile Payment")
 			unrecon.company = row.get("company")
 			unrecon.voucher_type = row.get("voucher_type")
 			unrecon.voucher_no = row.get("voucher_no")

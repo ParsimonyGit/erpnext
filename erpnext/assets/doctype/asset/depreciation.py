@@ -19,6 +19,7 @@ from frappe.utils import (
 from frappe.utils.data import get_link_to_form
 from frappe.utils.user import get_users_with_role
 
+import erpnext
 from erpnext.accounts.doctype.accounting_dimension.accounting_dimension import (
 	get_checks_for_pl_and_bs_accounts,
 )
@@ -209,9 +210,7 @@ def make_depreciation_entry(
 				debit_account,
 				accounting_dimensions,
 			)
-			frappe.db.commit()
 		except Exception as e:
-			frappe.db.rollback()
 			depreciation_posting_error = e
 
 	asset.set_status()
@@ -464,14 +463,28 @@ def restore_asset(asset_name):
 
 
 def depreciate_asset(asset, date):
+	if not asset.calculate_depreciation:
+		return
+
 	asset.flags.ignore_validate_update_after_submit = True
 	asset.prepare_depreciation_data(date_of_disposal=date)
 	asset.save()
 
 	make_depreciation_entry(asset.name, date)
 
+	asset.reload()
+	cancel_depreciation_entries(asset, date)
+
+
+@erpnext.allow_regional
+def cancel_depreciation_entries(asset, date):
+	pass
+
 
 def reset_depreciation_schedule(asset, date):
+	if not asset.calculate_depreciation:
+		return
+
 	asset.flags.ignore_validate_update_after_submit = True
 
 	# recreate original depreciation schedule of the asset
@@ -494,7 +507,7 @@ def modify_depreciation_schedule_for_asset_repairs(asset):
 
 
 def reverse_depreciation_entry_made_after_disposal(asset, date):
-	if not asset.calculate_depreciation:
+	if not asset.calculate_depreciation or not asset.get("schedules"):
 		return
 
 	row = -1
@@ -506,7 +519,7 @@ def reverse_depreciation_entry_made_after_disposal(asset, date):
 		else:
 			row += 1
 
-		if schedule.schedule_date == date:
+		if schedule.schedule_date == date and schedule.journal_entry:
 			if not disposal_was_made_on_original_schedule_date(
 				asset, schedule, row, date
 			) or disposal_happens_in_the_future(date):
@@ -739,6 +752,15 @@ def get_disposal_account_and_cost_center(company):
 @frappe.whitelist()
 def get_value_after_depreciation_on_disposal_date(asset, disposal_date, finance_book=None):
 	asset_doc = frappe.get_doc("Asset", asset)
+
+	if asset_doc.available_for_use_date > getdate(disposal_date):
+		frappe.throw(
+			"Disposal date {0} cannot be before available for use date {1} of the asset.".format(
+				disposal_date, asset_doc.available_for_use_date
+			)
+		)
+	elif asset_doc.available_for_use_date == getdate(disposal_date):
+		return flt(asset_doc.gross_purchase_amount - asset_doc.opening_accumulated_depreciation)
 
 	if asset_doc.calculate_depreciation:
 		asset_doc.prepare_depreciation_data(getdate(disposal_date))

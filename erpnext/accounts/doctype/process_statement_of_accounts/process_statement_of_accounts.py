@@ -76,6 +76,8 @@ def get_statement_dict(doc, get_statement_dict=False):
 		)
 
 		filters = get_common_filters(doc)
+		if doc.ignore_exchange_rate_revaluation_journals:
+			filters.update({"ignore_err": True})
 
 		if doc.report == "General Ledger":
 			filters.update(get_gl_filters(doc, entry, tax_id, presentation_currency))
@@ -395,11 +397,16 @@ def send_emails(document_name, from_scheduler=False, posting_date=None):
 			subject = frappe.render_template(doc.subject, context)
 			message = frappe.render_template(doc.body, context)
 
+			if doc.sender:
+				sender_email = frappe.db.get_value("Email Account", doc.sender, "email_id")
+			else:
+				sender_email = frappe.session.user
+
 			frappe.enqueue(
 				queue="short",
 				method=frappe.sendmail,
 				recipients=recipients,
-				sender=doc.sender or frappe.session.user,
+				sender=sender_email,
 				cc=cc,
 				subject=subject,
 				message=message,

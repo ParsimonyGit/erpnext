@@ -11,7 +11,7 @@ from frappe.cache_manager import clear_defaults_cache
 from frappe.contacts.address_and_contact import load_address_and_contact
 from frappe.custom.doctype.property_setter.property_setter import make_property_setter
 from frappe.desk.page.setup_wizard.setup_wizard import make_records
-from frappe.utils import cint, formatdate, get_timestamp, today
+from frappe.utils import cint, formatdate, get_link_to_form, get_timestamp, today
 from frappe.utils.nestedset import NestedSet, rebuild_tree
 
 from erpnext.accounts.doctype.account.account import get_account_currency
@@ -92,7 +92,6 @@ class Company(NestedSet):
 			["Default Income Account", "default_income_account"],
 			["Stock Received But Not Billed Account", "stock_received_but_not_billed"],
 			["Stock Adjustment Account", "stock_adjustment_account"],
-			["Expense Included In Valuation Account", "expenses_included_in_valuation"],
 		]
 
 		for account in accounts:
@@ -384,7 +383,6 @@ class Company(NestedSet):
 			"depreciation_expense_account": "Depreciation",
 			"capital_work_in_progress_account": "Capital Work in Progress",
 			"asset_received_but_not_billed": "Asset Received But Not Billed",
-			"expenses_included_in_asset_valuation": "Expenses Included In Asset Valuation",
 			"default_expense_account": "Cost of Goods Sold",
 		}
 
@@ -394,7 +392,6 @@ class Company(NestedSet):
 					"stock_received_but_not_billed": "Stock Received But Not Billed",
 					"default_inventory_account": "Stock",
 					"stock_adjustment_account": "Stock Adjustment",
-					"expenses_included_in_valuation": "Expenses Included In Valuation",
 				}
 			)
 
@@ -815,6 +812,19 @@ def get_default_company_address(name, sort_key="is_primary_address", existing_ad
 
 @frappe.whitelist()
 def create_transaction_deletion_request(company):
+	from erpnext.setup.doctype.transaction_deletion_record.transaction_deletion_record import (
+		is_deletion_doc_running,
+	)
+
+	is_deletion_doc_running(company)
+
 	tdr = frappe.get_doc({"doctype": "Transaction Deletion Record", "company": company})
-	tdr.insert()
 	tdr.submit()
+	tdr.start_deletion_tasks()
+
+	frappe.msgprint(
+		_("A Transaction Deletion Document: {0} is triggered for {0}").format(
+			get_link_to_form("Transaction Deletion Record", tdr.name)
+		),
+		frappe.bold(company),
+	)

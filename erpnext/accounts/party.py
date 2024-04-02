@@ -5,11 +5,11 @@
 from typing import Optional
 
 import frappe
-from frappe import _, msgprint, scrub
+from frappe import _, msgprint, qb, scrub
 from frappe.contacts.doctype.address.address import get_company_address, get_default_address
 from frappe.core.doctype.user_permission.user_permission import get_permitted_documents
 from frappe.model.utils import get_fetch_values
-from frappe.query_builder.functions import Abs, Date, Sum
+from frappe.query_builder.functions import Abs, Count, Date, Sum
 from frappe.utils import (
 	add_days,
 	add_months,
@@ -31,7 +31,12 @@ from erpnext.accounts.utils import get_fiscal_year
 from erpnext.exceptions import InvalidAccountCurrency, PartyDisabled, PartyFrozen
 from erpnext.utilities.regional import temporary_flag
 
-PURCHASE_TRANSACTION_TYPES = {"Purchase Order", "Purchase Receipt", "Purchase Invoice"}
+PURCHASE_TRANSACTION_TYPES = {
+	"Supplier Quotation",
+	"Purchase Order",
+	"Purchase Receipt",
+	"Purchase Invoice",
+}
 SALES_TRANSACTION_TYPES = {
 	"Quotation",
 	"Sales Order",
@@ -109,14 +114,12 @@ def _get_party_details(
 		set_account_and_due_date(party, account, party_type, company, posting_date, bill_date, doctype)
 	)
 	party = party_details[party_type.lower()]
-
-	if not ignore_permissions and not (
-		frappe.has_permission(party_type, "read", party)
-		or frappe.has_permission(party_type, "select", party)
-	):
-		frappe.throw(_("Not permitted for {0}").format(party), frappe.PermissionError)
-
 	party = frappe.get_doc(party_type, party)
+
+	if not ignore_permissions:
+		ptype = "select" if frappe.only_has_select_perm(party_type) else "read"
+		frappe.has_permission(party_type, ptype, party, throw=True)
+
 	currency = party.get("default_currency") or currency or get_company_currency(company)
 
 	party_address, shipping_address = set_address_details(
@@ -190,7 +193,7 @@ def set_address_details(
 	company_address=None,
 	shipping_address=None,
 	*,
-	ignore_permissions=False
+	ignore_permissions=False,
 ):
 	billing_address_field = (
 		"customer_address" if party_type == "Lead" else party_type.lower() + "_address"
@@ -231,8 +234,10 @@ def set_address_details(
 		if shipping_address:
 			party_details.update(
 				shipping_address=shipping_address,
-				shipping_address_display=render_address(shipping_address),
-				**get_fetch_values(doctype, "shipping_address", shipping_address)
+				shipping_address_display=render_address(
+					shipping_address, check_permissions=not ignore_permissions
+				),
+				**get_fetch_values(doctype, "shipping_address", shipping_address),
 			)
 
 		if party_details.company_address:
@@ -243,7 +248,7 @@ def set_address_details(
 					party_details.company_address_display
 					or render_address(party_details.company_address, check_permissions=False)
 				),
-				**get_fetch_values(doctype, "billing_address", party_details.company_address)
+				**get_fetch_values(doctype, "billing_address", party_details.company_address),
 			)
 
 			# shipping address - if not already set
@@ -251,7 +256,7 @@ def set_address_details(
 				party_details.update(
 					shipping_address=party_details.billing_address,
 					shipping_address_display=party_details.billing_address_display,
-					**get_fetch_values(doctype, "shipping_address", party_details.billing_address)
+					**get_fetch_values(doctype, "shipping_address", party_details.billing_address),
 				)
 
 	party_address, shipping_address = (
@@ -459,11 +464,19 @@ def get_party_account_currency(party_type, party, company):
 
 def get_party_gle_currency(party_type, party, company):
 	def generator():
-		existing_gle_currency = frappe.db.sql(
-			"""select account_currency from `tabGL Entry`
-			where docstatus=1 and company=%(company)s and party_type=%(party_type)s and party=%(party)s
-			limit 1""",
-			{"company": company, "party_type": party_type, "party": party},
+		gl = qb.DocType("GL Entry")
+		existing_gle_currency = (
+			qb.from_(gl)
+			.select(gl.account_currency)
+			.where(
+				(gl.docstatus == 1)
+				& (gl.company == company)
+				& (gl.party_type == party_type)
+				& (gl.party == party)
+				& (gl.is_cancelled == 0)
+			)
+			.limit(1)
+			.run()
 		)
 
 		return existing_gle_currency[0][0] if existing_gle_currency else None
@@ -748,34 +761,37 @@ def get_timeline_data(doctype, name):
 	from frappe.desk.form.load import get_communication_data
 
 	out = {}
-	fields = "creation, count(*)"
 	after = add_years(None, -1).strftime("%Y-%m-%d")
-	group_by = "group by Date(creation)"
 
 	data = get_communication_data(
 		doctype,
 		name,
 		after=after,
-		group_by="group by creation",
-		fields="C.creation as creation, count(C.name)",
+		group_by="group by communication_date",
+		fields="C.communication_date as communication_date, count(C.name)",
 		as_dict=False,
 	)
 
 	# fetch and append data from Activity Log
-	data += frappe.db.sql(
-		"""select {fields}
-		from `tabActivity Log`
-		where (reference_doctype=%(doctype)s and reference_name=%(name)s)
-		or (timeline_doctype in (%(doctype)s) and timeline_name=%(name)s)
-		or (reference_doctype in ("Quotation", "Opportunity") and timeline_name=%(name)s)
-		and status!='Success' and creation > {after}
-		{group_by} order by creation desc
-		""".format(
-			fields=fields, group_by=group_by, after=after
-		),
-		{"doctype": doctype, "name": name},
-		as_dict=False,
-	)
+	activity_log = frappe.qb.DocType("Activity Log")
+	data += (
+		frappe.qb.from_(activity_log)
+		.select(activity_log.communication_date, Count(activity_log.name))
+		.where(
+			(
+				((activity_log.reference_doctype == doctype) & (activity_log.reference_name == name))
+				| ((activity_log.timeline_doctype == doctype) & (activity_log.timeline_name == name))
+				| (
+					(activity_log.reference_doctype.isin(["Quotation", "Opportunity"]))
+					& (activity_log.timeline_name == name)
+				)
+			)
+			& (activity_log.status != "Success")
+			& (activity_log.creation > after)
+		)
+		.groupby(activity_log.communication_date)
+		.orderby(activity_log.communication_date, order=frappe.qb.desc)
+	).run()
 
 	timeline_items = dict(data)
 
@@ -940,6 +956,9 @@ def get_partywise_advanced_payment_amount(
 
 	if party:
 		query = query.where(ple.party == party)
+
+	if invoice_doctypes := frappe.get_hooks("invoice_doctypes"):
+		query = query.where(ple.voucher_type.notin(invoice_doctypes))
 
 	data = query.run()
 	if data:

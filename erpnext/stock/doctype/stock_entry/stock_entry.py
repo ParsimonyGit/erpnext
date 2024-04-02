@@ -24,7 +24,12 @@ from frappe.utils import (
 import erpnext
 from erpnext.accounts.general_ledger import process_gl_map
 from erpnext.controllers.taxes_and_totals import init_landed_taxes_and_totals
-from erpnext.manufacturing.doctype.bom.bom import add_additional_cost, validate_bom_no
+from erpnext.manufacturing.doctype.bom.bom import (
+	add_additional_cost,
+	get_op_cost_from_sub_assemblies,
+	get_scrap_items_from_sub_assemblies,
+	validate_bom_no,
+)
 from erpnext.setup.doctype.brand.brand import get_brand_defaults
 from erpnext.setup.doctype.item_group.item_group import get_item_group_defaults
 from erpnext.stock.doctype.batch.batch import get_batch_no, get_batch_qty, set_batch_nos
@@ -154,7 +159,6 @@ class StockEntry(StockController):
 			set_batch_nos(self, "s_warehouse")
 
 		self.validate_serialized_batch()
-		self.set_actual_qty()
 		self.calculate_rate_and_amount()
 		self.validate_putaway_capacity()
 
@@ -168,7 +172,7 @@ class StockEntry(StockController):
 		if self.is_enqueue_action():
 			frappe.msgprint(
 				_(
-					"The task has been enqueued as a background job. In case there is any issue on processing in background, the system will add a comment about the error on this Stock Reconciliation and revert to the Draft stage"
+					"The task has been enqueued as a background job. In case there is any issue on processing in background, the system will add a comment about the error on this Stock Entry and revert to the Draft stage"
 				)
 			)
 			self.queue_action("submit", timeout=2000)
@@ -179,7 +183,7 @@ class StockEntry(StockController):
 		if self.is_enqueue_action():
 			frappe.msgprint(
 				_(
-					"The task has been enqueued as a background job. In case there is any issue on processing in background, the system will add a comment about the error on this Stock Reconciliation and revert to the Submitted stage"
+					"The task has been enqueued as a background job. In case there is any issue on processing in background, the system will add a comment about the error on this Stock Entry and revert to the Submitted stage"
 				)
 			)
 			self.queue_action("cancel", timeout=2000)
@@ -451,31 +455,37 @@ class StockEntry(StockController):
 								item_code.append(item.item_code)
 
 	def validate_fg_completed_qty(self):
-		item_wise_qty = {}
-		if self.purpose == "Manufacture" and self.work_order:
-			for d in self.items:
-				if d.is_finished_item:
-					if self.process_loss_qty:
-						d.qty = self.fg_completed_qty - self.process_loss_qty
+		if self.purpose != "Manufacture":
+			return
 
-					item_wise_qty.setdefault(d.item_code, []).append(d.qty)
+		fg_qty = defaultdict(float)
+		for d in self.items:
+			if d.is_finished_item:
+				fg_qty[d.item_code] += flt(d.qty)
+
+		if not fg_qty:
+			return
 
 		precision = frappe.get_precision("Stock Entry Detail", "qty")
-		for item_code, qty_list in item_wise_qty.items():
-			total = flt(sum(qty_list), precision)
+		fg_item = list(fg_qty.keys())[0]
+		fg_item_qty = flt(fg_qty[fg_item], precision)
+		fg_completed_qty = flt(self.fg_completed_qty, precision)
 
-			if (self.fg_completed_qty - total) > 0 and not self.process_loss_qty:
-				self.process_loss_qty = flt(self.fg_completed_qty - total, precision)
-				self.process_loss_percentage = flt(self.process_loss_qty * 100 / self.fg_completed_qty)
+		for d in self.items:
+			if not fg_qty.get(d.item_code):
+				continue
 
-			if self.process_loss_qty:
-				total += flt(self.process_loss_qty, precision)
+			if (fg_completed_qty - fg_item_qty) > 0:
+				self.process_loss_qty = fg_completed_qty - fg_item_qty
 
-			if self.fg_completed_qty != total:
+			if not self.process_loss_qty:
+				continue
+
+			if fg_completed_qty != (flt(fg_item_qty) + flt(self.process_loss_qty, precision)):
 				frappe.throw(
-					_("The finished product {0} quantity {1} and For Quantity {2} cannot be different").format(
-						frappe.bold(item_code), frappe.bold(total), frappe.bold(self.fg_completed_qty)
-					)
+					_(
+						"Since there is a process loss of {0} units for the finished good {1}, you should reduce the quantity by {0} units for the finished good {1} in the Items Table."
+					).format(frappe.bold(self.process_loss_qty), frappe.bold(d.item_code))
 				)
 
 	def validate_difference_account(self):
@@ -982,14 +992,34 @@ class StockEntry(StockController):
 						& (se.docstatus == 1)
 						& (se_detail.item_code == se_item.item_code)
 						& (
-							(se.purchase_order == self.purchase_order)
+							((se.purchase_order == self.purchase_order) & (se_detail.po_detail == se_item.po_detail))
 							if self.subcontract_data.order_doctype == "Purchase Order"
-							else (se.subcontracting_order == self.subcontracting_order)
+							else (
+								(se.subcontracting_order == self.subcontracting_order)
+								& (se_detail.sco_rm_detail == se_item.sco_rm_detail)
+							)
 						)
 					)
-				).run()[0][0]
+				).run()[0][0] or 0
 
-				if flt(total_supplied, precision) > flt(total_allowed, precision):
+				total_returned = 0
+				if self.subcontract_data.order_doctype == "Subcontracting Order":
+					total_returned = (
+						frappe.qb.from_(se)
+						.inner_join(se_detail)
+						.on(se.name == se_detail.parent)
+						.select(Sum(se_detail.transfer_qty))
+						.where(
+							(se.purpose == "Material Transfer")
+							& (se.docstatus == 1)
+							& (se.is_return == 1)
+							& (se_detail.item_code == se_item.item_code)
+							& (se_detail.sco_rm_detail == se_item.sco_rm_detail)
+							& (se.subcontracting_order == self.subcontracting_order)
+						)
+					).run()[0][0] or 0
+
+				if flt(total_supplied - total_returned, precision) > flt(total_allowed, precision):
 					frappe.throw(
 						_("Row {0}# Item {1} cannot be transferred more than {2} against {3} {4}").format(
 							se_item.idx,
@@ -1741,11 +1771,22 @@ class StockEntry(StockController):
 	def get_bom_scrap_material(self, qty):
 		from erpnext.manufacturing.doctype.bom.bom import get_bom_items_as_dict
 
-		# item dict = { item_code: {qty, description, stock_uom} }
-		item_dict = (
-			get_bom_items_as_dict(self.bom_no, self.company, qty=qty, fetch_exploded=0, fetch_scrap_items=1)
-			or {}
-		)
+		if (
+			frappe.db.get_single_value(
+				"Manufacturing Settings", "set_op_cost_and_scrape_from_sub_assemblies"
+			)
+			and self.work_order
+			and frappe.get_cached_value("Work Order", self.work_order, "use_multi_level_bom")
+		):
+			item_dict = get_scrap_items_from_sub_assemblies(self.bom_no, self.company, qty)
+		else:
+			# item dict = { item_code: {qty, description, stock_uom} }
+			item_dict = (
+				get_bom_items_as_dict(
+					self.bom_no, self.company, qty=qty, fetch_exploded=0, fetch_scrap_items=1
+				)
+				or {}
+			)
 
 		for item in item_dict.values():
 			item.from_warehouse = ""
@@ -2501,6 +2542,15 @@ def get_work_order_details(work_order, company):
 def get_operating_cost_per_unit(work_order=None, bom_no=None):
 	operating_cost_per_unit = 0
 	if work_order:
+		if (
+			bom_no
+			and frappe.db.get_single_value(
+				"Manufacturing Settings", "set_op_cost_and_scrape_from_sub_assemblies"
+			)
+			and frappe.get_cached_value("Work Order", work_order, "use_multi_level_bom")
+		):
+			return get_op_cost_from_sub_assemblies(bom_no)
+
 		if not bom_no:
 			bom_no = work_order.bom_no
 

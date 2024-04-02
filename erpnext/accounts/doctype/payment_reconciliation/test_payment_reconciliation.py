@@ -14,6 +14,7 @@ from erpnext.accounts.doctype.payment_entry.test_payment_entry import create_pay
 from erpnext.accounts.doctype.purchase_invoice.test_purchase_invoice import make_purchase_invoice
 from erpnext.accounts.doctype.sales_invoice.test_sales_invoice import create_sales_invoice
 from erpnext.accounts.party import get_party_account
+from erpnext.buying.doctype.purchase_order.test_purchase_order import create_purchase_order
 from erpnext.stock.doctype.item.test_item import create_item
 
 test_dependencies = ["Item"]
@@ -55,6 +56,7 @@ class TestPaymentReconciliation(FrappeTestCase):
 		self.expense_account = "Cost of Goods Sold - _PR"
 		self.debit_to = "Debtors - _PR"
 		self.creditors = "Creditors - _PR"
+		self.cash = "Cash - _PR"
 
 		# create bank account
 		if frappe.db.exists("Account", "HDFC - _PR"):
@@ -85,26 +87,44 @@ class TestPaymentReconciliation(FrappeTestCase):
 		self.customer5 = make_customer("_Test PR Customer 5", "EUR")
 
 	def create_account(self):
-		account_name = "Debtors EUR"
-		if not frappe.db.get_value(
-			"Account", filters={"account_name": account_name, "company": self.company}
-		):
-			acc = frappe.new_doc("Account")
-			acc.account_name = account_name
-			acc.parent_account = "Accounts Receivable - _PR"
-			acc.company = self.company
-			acc.account_currency = "EUR"
-			acc.account_type = "Receivable"
-			acc.insert()
-		else:
-			name = frappe.db.get_value(
-				"Account",
-				filters={"account_name": account_name, "company": self.company},
-				fieldname="name",
-				pluck=True,
-			)
-			acc = frappe.get_doc("Account", name)
-		self.debtors_eur = acc.name
+		accounts = [
+			{
+				"attribute": "debtors_eur",
+				"account_name": "Debtors EUR",
+				"parent_account": "Accounts Receivable - _PR",
+				"account_currency": "EUR",
+				"account_type": "Receivable",
+			},
+			{
+				"attribute": "creditors_usd",
+				"account_name": "Payable USD",
+				"parent_account": "Accounts Payable - _PR",
+				"account_currency": "USD",
+				"account_type": "Payable",
+			},
+		]
+
+		for x in accounts:
+			x = frappe._dict(x)
+			if not frappe.db.get_value(
+				"Account", filters={"account_name": x.account_name, "company": self.company}
+			):
+				acc = frappe.new_doc("Account")
+				acc.account_name = x.account_name
+				acc.parent_account = x.parent_account
+				acc.company = self.company
+				acc.account_currency = x.account_currency
+				acc.account_type = x.account_type
+				acc.insert()
+			else:
+				name = frappe.db.get_value(
+					"Account",
+					filters={"account_name": x.account_name, "company": self.company},
+					fieldname="name",
+					pluck=True,
+				)
+				acc = frappe.get_doc("Account", name)
+			setattr(self, x.attribute, acc.name)
 
 	def create_sales_invoice(
 		self, qty=1, rate=100, posting_date=nowdate(), do_not_save=False, do_not_submit=False
@@ -151,6 +171,64 @@ class TestPaymentReconciliation(FrappeTestCase):
 		payment.posting_date = posting_date
 		return payment
 
+	def create_purchase_invoice(
+		self, qty=1, rate=100, posting_date=nowdate(), do_not_save=False, do_not_submit=False
+	):
+		"""
+		Helper function to populate default values in sales invoice
+		"""
+		pinv = make_purchase_invoice(
+			qty=qty,
+			rate=rate,
+			company=self.company,
+			customer=self.supplier,
+			item_code=self.item,
+			item_name=self.item,
+			cost_center=self.cost_center,
+			warehouse=self.warehouse,
+			debit_to=self.debit_to,
+			parent_cost_center=self.cost_center,
+			update_stock=0,
+			currency="INR",
+			is_pos=0,
+			is_return=0,
+			return_against=None,
+			income_account=self.income_account,
+			expense_account=self.expense_account,
+			do_not_save=do_not_save,
+			do_not_submit=do_not_submit,
+		)
+		return pinv
+
+	def create_purchase_order(
+		self, qty=1, rate=100, posting_date=nowdate(), do_not_save=False, do_not_submit=False
+	):
+		"""
+		Helper function to populate default values in sales invoice
+		"""
+		pord = create_purchase_order(
+			qty=qty,
+			rate=rate,
+			company=self.company,
+			customer=self.supplier,
+			item_code=self.item,
+			item_name=self.item,
+			cost_center=self.cost_center,
+			warehouse=self.warehouse,
+			debit_to=self.debit_to,
+			parent_cost_center=self.cost_center,
+			update_stock=0,
+			currency="INR",
+			is_pos=0,
+			is_return=0,
+			return_against=None,
+			income_account=self.income_account,
+			expense_account=self.expense_account,
+			do_not_save=do_not_save,
+			do_not_submit=do_not_submit,
+		)
+		return pord
+
 	def clear_old_entries(self):
 		doctype_list = [
 			"GL Entry",
@@ -163,13 +241,11 @@ class TestPaymentReconciliation(FrappeTestCase):
 		for doctype in doctype_list:
 			qb.from_(qb.DocType(doctype)).delete().where(qb.DocType(doctype).company == self.company).run()
 
-	def create_payment_reconciliation(self):
+	def create_payment_reconciliation(self, party_is_customer=True):
 		pr = frappe.new_doc("Payment Reconciliation")
 		pr.company = self.company
-		pr.party_type = (
-			self.party_type if hasattr(self, "party_type") and self.party_type else "Customer"
-		)
-		pr.party = self.customer
+		pr.party_type = "Customer" if party_is_customer else "Supplier"
+		pr.party = self.customer if party_is_customer else self.supplier
 		pr.receivable_payable_account = get_party_account(pr.party_type, pr.party, pr.company)
 		pr.from_invoice_date = pr.to_invoice_date = pr.from_payment_date = pr.to_payment_date = nowdate()
 		return pr
@@ -411,6 +487,91 @@ class TestPaymentReconciliation(FrappeTestCase):
 		self.assertEqual(len(pr.get("invoices")), 0)
 		self.assertEqual(len(pr.get("payments")), 0)
 
+	def test_payment_against_foreign_currency_journal(self):
+		transaction_date = nowdate()
+
+		self.supplier = "_Test Supplier USD"
+		self.supplier2 = make_supplier("_Test Supplier2 USD", "USD")
+		amount = 100
+		exc_rate1 = 80
+		exc_rate2 = 83
+
+		je = frappe.new_doc("Journal Entry")
+		je.posting_date = transaction_date
+		je.company = self.company
+		je.user_remark = "test"
+		je.multi_currency = 1
+		je.set(
+			"accounts",
+			[
+				{
+					"account": self.creditors_usd,
+					"party_type": "Supplier",
+					"party": self.supplier,
+					"exchange_rate": exc_rate1,
+					"cost_center": self.cost_center,
+					"credit": amount * exc_rate1,
+					"credit_in_account_currency": amount,
+				},
+				{
+					"account": self.creditors_usd,
+					"party_type": "Supplier",
+					"party": self.supplier2,
+					"exchange_rate": exc_rate2,
+					"cost_center": self.cost_center,
+					"credit": amount * exc_rate2,
+					"credit_in_account_currency": amount,
+				},
+				{
+					"account": self.expense_account,
+					"cost_center": self.cost_center,
+					"debit": (amount * exc_rate1) + (amount * exc_rate2),
+					"debit_in_account_currency": (amount * exc_rate1) + (amount * exc_rate2),
+				},
+			],
+		)
+		je.save().submit()
+
+		pe = self.create_payment_entry(amount=amount, posting_date=transaction_date)
+		pe.payment_type = "Pay"
+		pe.party_type = "Supplier"
+		pe.party = self.supplier
+		pe.paid_to = self.creditors_usd
+		pe.paid_from = self.cash
+		pe.paid_amount = 8000
+		pe.received_amount = 100
+		pe.target_exchange_rate = exc_rate1
+		pe.paid_to_account_currency = "USD"
+		pe.save().submit()
+
+		pr = self.create_payment_reconciliation(party_is_customer=False)
+		pr.receivable_payable_account = self.creditors_usd
+		pr.minimum_invoice_amount = pr.maximum_invoice_amount = amount
+		pr.from_invoice_date = pr.to_invoice_date = transaction_date
+		pr.from_payment_date = pr.to_payment_date = transaction_date
+
+		pr.get_unreconciled_entries()
+		invoices = [x.as_dict() for x in pr.get("invoices")]
+		payments = [x.as_dict() for x in pr.get("payments")]
+		pr.allocate_entries(frappe._dict({"invoices": invoices, "payments": payments}))
+
+		# There should no difference_amount as the Journal and Payment have same exchange rate -  'exc_rate1'
+		for row in pr.allocation:
+			self.assertEqual(flt(row.get("difference_amount")), 0.0)
+
+		pr.reconcile()
+
+		# check PR tool output
+		self.assertEqual(len(pr.get("invoices")), 0)
+		self.assertEqual(len(pr.get("payments")), 0)
+
+		journals = frappe.db.get_all(
+			"Journal Entry Account",
+			filters={"reference_type": je.doctype, "reference_name": je.name, "docstatus": 1},
+			fields=["parent"],
+		)
+		self.assertEqual([], journals)
+
 	def test_journal_against_invoice(self):
 		transaction_date = nowdate()
 		amount = 100
@@ -515,6 +676,70 @@ class TestPaymentReconciliation(FrappeTestCase):
 		si.reload()
 		self.assertEqual(si.status, "Paid")
 		self.assertEqual(si.outstanding_amount, 0)
+
+	def test_invoice_status_after_cr_note_cancellation(self):
+		# This test case is made after the 'always standalone Credit/Debit notes' feature is introduced
+		transaction_date = nowdate()
+		amount = 100
+
+		si = self.create_sales_invoice(qty=1, rate=amount, posting_date=transaction_date)
+
+		cr_note = self.create_sales_invoice(
+			qty=-1, rate=amount, posting_date=transaction_date, do_not_save=True, do_not_submit=True
+		)
+		cr_note.is_return = 1
+		cr_note.return_against = si.name
+		cr_note = cr_note.save().submit()
+
+		pr = self.create_payment_reconciliation()
+
+		pr.get_unreconciled_entries()
+		invoices = [x.as_dict() for x in pr.get("invoices")]
+		payments = [x.as_dict() for x in pr.get("payments")]
+		pr.allocate_entries(frappe._dict({"invoices": invoices, "payments": payments}))
+		pr.reconcile()
+
+		pr.get_unreconciled_entries()
+		self.assertEqual(pr.get("invoices"), [])
+		self.assertEqual(pr.get("payments"), [])
+
+		journals = frappe.db.get_all(
+			"Journal Entry",
+			filters={
+				"is_system_generated": 1,
+				"docstatus": 1,
+				"voucher_type": "Credit Note",
+				"reference_type": si.doctype,
+				"reference_name": si.name,
+			},
+			pluck="name",
+		)
+		self.assertEqual(len(journals), 1)
+
+		# assert status and outstanding
+		si.reload()
+		self.assertEqual(si.status, "Credit Note Issued")
+		self.assertEqual(si.outstanding_amount, 0)
+
+		cr_note.reload()
+		cr_note.cancel()
+		# 'Credit Note' Journal should be auto cancelled
+		journals = frappe.db.get_all(
+			"Journal Entry",
+			filters={
+				"is_system_generated": 1,
+				"docstatus": 1,
+				"voucher_type": "Credit Note",
+				"reference_type": si.doctype,
+				"reference_name": si.name,
+			},
+			pluck="name",
+		)
+		self.assertEqual(len(journals), 0)
+		# assert status and outstanding
+		si.reload()
+		self.assertEqual(si.status, "Unpaid")
+		self.assertEqual(si.outstanding_amount, 100)
 
 	def test_cr_note_partial_against_invoice(self):
 		transaction_date = nowdate()
@@ -905,10 +1130,25 @@ class TestPaymentReconciliation(FrappeTestCase):
 		self.assertEqual(pr.allocation[0].allocated_amount, 85)
 		self.assertEqual(pr.allocation[0].difference_amount, 0)
 
+		pr.reconcile()
+		si.reload()
+		self.assertEqual(si.outstanding_amount, 0)
+		# No Exchange Gain/Loss journal should be generated
+		exc_gain_loss_journals = frappe.db.get_all(
+			"Journal Entry Account",
+			filters={"reference_type": si.doctype, "reference_name": si.name, "docstatus": 1},
+			fields=["parent"],
+		)
+		self.assertEqual(exc_gain_loss_journals, [])
+
 	def test_reconciliation_purchase_invoice_against_return(self):
-		pi = make_purchase_invoice(
-			supplier="_Test Supplier USD", currency="USD", conversion_rate=50
-		).submit()
+		self.supplier = "_Test Supplier USD"
+		pi = self.create_purchase_invoice(qty=5, rate=50, do_not_submit=True)
+		pi.supplier = self.supplier
+		pi.currency = "USD"
+		pi.conversion_rate = 50
+		pi.credit_to = self.creditors_usd
+		pi.save().submit()
 
 		pi_return = frappe.get_doc(pi.as_dict())
 		pi_return.name = None
@@ -918,11 +1158,12 @@ class TestPaymentReconciliation(FrappeTestCase):
 		pi_return.items[0].qty = -pi_return.items[0].qty
 		pi_return.submit()
 
-		self.company = "_Test Company"
-		self.party_type = "Supplier"
-		self.customer = "_Test Supplier USD"
-
-		pr = self.create_payment_reconciliation()
+		pr = frappe.get_doc("Payment Reconciliation")
+		pr.company = self.company
+		pr.party_type = "Supplier"
+		pr.party = self.supplier
+		pr.receivable_payable_account = self.creditors_usd
+		pr.from_invoice_date = pr.to_invoice_date = pr.from_payment_date = pr.to_payment_date = nowdate()
 		pr.get_unreconciled_entries()
 
 		invoices = []
@@ -931,6 +1172,7 @@ class TestPaymentReconciliation(FrappeTestCase):
 			if invoice.invoice_number == pi.name:
 				invoices.append(invoice.as_dict())
 				break
+
 		for payment in pr.payments:
 			if payment.reference_name == pi_return.name:
 				payments.append(payment.as_dict())
@@ -939,6 +1181,155 @@ class TestPaymentReconciliation(FrappeTestCase):
 		pr.allocate_entries(frappe._dict({"invoices": invoices, "payments": payments}))
 
 		# Should not raise frappe.exceptions.ValidationError: Total Debit must be equal to Total Credit.
+		pr.reconcile()
+
+	def test_reconciliation_from_purchase_order_to_multiple_invoices(self):
+		"""
+		Reconciling advance payment from PO/SO to multiple invoices should not cause overallocation
+		"""
+
+		self.supplier = "_Test Supplier"
+
+		pi1 = self.create_purchase_invoice(qty=10, rate=100)
+		pi2 = self.create_purchase_invoice(qty=10, rate=100)
+		po = self.create_purchase_order(qty=20, rate=100)
+		pay = get_payment_entry(po.doctype, po.name)
+		# Overpay Puchase Order
+		pay.paid_amount = 3000
+		pay.save().submit()
+		# assert total allocated and unallocated before reconciliation
+		self.assertEqual(
+			(
+				pay.references[0].reference_doctype,
+				pay.references[0].reference_name,
+				pay.references[0].allocated_amount,
+			),
+			(po.doctype, po.name, 2000),
+		)
+		self.assertEqual(pay.total_allocated_amount, 2000)
+		self.assertEqual(pay.unallocated_amount, 1000)
+		self.assertEqual(pay.difference_amount, 0)
+
+		pr = self.create_payment_reconciliation(party_is_customer=False)
+		pr.get_unreconciled_entries()
+
+		self.assertEqual(len(pr.invoices), 2)
+		self.assertEqual(len(pr.payments), 2)
+
+		for x in pr.payments:
+			self.assertEqual((x.reference_type, x.reference_name), (pay.doctype, pay.name))
+
+		invoices = [x.as_dict() for x in pr.invoices]
+		payments = [x.as_dict() for x in pr.payments]
+		pr.allocate_entries(frappe._dict({"invoices": invoices, "payments": payments}))
+		# partial allocation on pi1 and full allocate on pi2
+		pr.allocation[0].allocated_amount = 100
+		pr.reconcile()
+
+		# assert references and total allocated and unallocated amount
+		pay.reload()
+		self.assertEqual(len(pay.references), 3)
+		self.assertEqual(
+			(
+				pay.references[0].reference_doctype,
+				pay.references[0].reference_name,
+				pay.references[0].allocated_amount,
+			),
+			(po.doctype, po.name, 900),
+		)
+		self.assertEqual(
+			(
+				pay.references[1].reference_doctype,
+				pay.references[1].reference_name,
+				pay.references[1].allocated_amount,
+			),
+			(pi1.doctype, pi1.name, 100),
+		)
+		self.assertEqual(
+			(
+				pay.references[2].reference_doctype,
+				pay.references[2].reference_name,
+				pay.references[2].allocated_amount,
+			),
+			(pi2.doctype, pi2.name, 1000),
+		)
+		self.assertEqual(pay.total_allocated_amount, 2000)
+		self.assertEqual(pay.unallocated_amount, 1000)
+		self.assertEqual(pay.difference_amount, 0)
+
+		pr.get_unreconciled_entries()
+		self.assertEqual(len(pr.invoices), 1)
+		self.assertEqual(len(pr.payments), 2)
+
+		invoices = [x.as_dict() for x in pr.invoices]
+		payments = [x.as_dict() for x in pr.payments]
+		pr.allocate_entries(frappe._dict({"invoices": invoices, "payments": payments}))
+		pr.reconcile()
+
+		# assert references and total allocated and unallocated amount
+		pay.reload()
+		self.assertEqual(len(pay.references), 3)
+		# PO references should be removed now
+		self.assertEqual(
+			(
+				pay.references[0].reference_doctype,
+				pay.references[0].reference_name,
+				pay.references[0].allocated_amount,
+			),
+			(pi1.doctype, pi1.name, 100),
+		)
+		self.assertEqual(
+			(
+				pay.references[1].reference_doctype,
+				pay.references[1].reference_name,
+				pay.references[1].allocated_amount,
+			),
+			(pi2.doctype, pi2.name, 1000),
+		)
+		self.assertEqual(
+			(
+				pay.references[2].reference_doctype,
+				pay.references[2].reference_name,
+				pay.references[2].allocated_amount,
+			),
+			(pi1.doctype, pi1.name, 900),
+		)
+		self.assertEqual(pay.total_allocated_amount, 2000)
+		self.assertEqual(pay.unallocated_amount, 1000)
+		self.assertEqual(pay.difference_amount, 0)
+
+	def test_rounding_of_unallocated_amount(self):
+		self.supplier = "_Test Supplier USD"
+		pi = self.create_purchase_invoice(qty=1, rate=10, do_not_submit=True)
+		pi.supplier = self.supplier
+		pi.currency = "USD"
+		pi.conversion_rate = 80
+		pi.credit_to = self.creditors_usd
+		pi.save().submit()
+
+		pe = get_payment_entry(pi.doctype, pi.name)
+		pe.target_exchange_rate = 78.726500000
+		pe.received_amount = 26.75
+		pe.paid_amount = 2105.93
+		pe.references = []
+		pe.save().submit()
+
+		# unallocated_amount will have some rounding loss - 26.749950
+		self.assertNotEqual(pe.unallocated_amount, 26.75)
+
+		pr = frappe.get_doc("Payment Reconciliation")
+		pr.company = self.company
+		pr.party_type = "Supplier"
+		pr.party = self.supplier
+		pr.receivable_payable_account = self.creditors_usd
+		pr.from_invoice_date = pr.to_invoice_date = pr.from_payment_date = pr.to_payment_date = nowdate()
+		pr.get_unreconciled_entries()
+
+		invoices = [invoice.as_dict() for invoice in pr.invoices]
+		payments = [payment.as_dict() for payment in pr.payments]
+		pr.allocate_entries(frappe._dict({"invoices": invoices, "payments": payments}))
+
+		# Should not raise frappe.exceptions.ValidationError: Payment Entry has been modified after you pulled it. Please pull it again.
 		pr.reconcile()
 
 
@@ -954,3 +1345,17 @@ def make_customer(customer_name, currency=None):
 		return customer.name
 	else:
 		return customer_name
+
+
+def make_supplier(supplier_name, currency=None):
+	if not frappe.db.exists("Supplier", supplier_name):
+		supplier = frappe.new_doc("Supplier")
+		supplier.supplier_name = supplier_name
+		supplier.type = "Individual"
+		supplier.supplier_group = "Local"
+		if currency:
+			supplier.default_currency = currency
+		supplier.save()
+		return supplier.name
+	else:
+		return supplier_name

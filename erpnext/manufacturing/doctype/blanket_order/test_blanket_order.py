@@ -5,6 +5,7 @@ from frappe.tests.utils import FrappeTestCase
 from frappe.utils import add_months, today
 
 from erpnext import get_company_currency
+from erpnext.stock.doctype.item.test_item import make_item
 
 from .blanket_order import make_order
 
@@ -63,7 +64,7 @@ class TestBlanketOrder(FrappeTestCase):
 		po1.currency = get_company_currency(po1.company)
 		self.assertEqual(po1.items[0].qty, (bo.items[0].qty - bo.items[0].ordered_qty))
 
-	def test_over_order_allowance(self):
+	def test_blanket_order_allowance(self):
 		# Sales Order
 		bo = make_blanket_order(blanket_order_type="Selling", quantity=100)
 
@@ -74,7 +75,7 @@ class TestBlanketOrder(FrappeTestCase):
 		so.items[0].qty = 110
 		self.assertRaises(frappe.ValidationError, so.submit)
 
-		frappe.db.set_single_value("Selling Settings", "over_order_allowance", 10)
+		frappe.db.set_single_value("Selling Settings", "blanket_order_allowance", 10)
 		so.submit()
 
 		# Purchase Order
@@ -87,8 +88,32 @@ class TestBlanketOrder(FrappeTestCase):
 		po.items[0].qty = 110
 		self.assertRaises(frappe.ValidationError, po.submit)
 
-		frappe.db.set_single_value("Buying Settings", "over_order_allowance", 10)
+		frappe.db.set_single_value("Buying Settings", "blanket_order_allowance", 10)
 		po.submit()
+
+	def test_party_item_code(self):
+		item_doc = make_item("_Test Item 1 for Blanket Order")
+		item_code = item_doc.name
+
+		customer = "_Test Customer"
+		supplier = "_Test Supplier"
+
+		if not frappe.db.exists(
+			"Item Customer Detail", {"customer_name": customer, "parent": item_code}
+		):
+			item_doc.append("customer_items", {"customer_name": customer, "ref_code": "CUST-REF-1"})
+			item_doc.save()
+
+		if not frappe.db.exists("Item Supplier", {"supplier": supplier, "parent": item_code}):
+			item_doc.append("supplier_items", {"supplier": supplier, "supplier_part_no": "SUPP-PART-1"})
+			item_doc.save()
+
+		# Blanket Order for Selling
+		bo = make_blanket_order(blanket_order_type="Selling", customer=customer, item_code=item_code)
+		self.assertEqual(bo.items[0].party_item_code, "CUST-REF-1")
+
+		bo = make_blanket_order(blanket_order_type="Purchasing", supplier=supplier, item_code=item_code)
+		self.assertEqual(bo.items[0].party_item_code, "SUPP-PART-1")
 
 
 def make_blanket_order(**args):

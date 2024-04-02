@@ -350,7 +350,13 @@ def get_conditions(filters, additional_conditions=None):
 				and ifnull(`tabSales Invoice Payment`.mode_of_payment, '') = %(mode_of_payment)s)"""
 
 	if filters.get("warehouse"):
-		conditions += """and ifnull(`tabSales Invoice Item`.warehouse, '') = %(warehouse)s"""
+		if frappe.db.get_value("Warehouse", filters.get("warehouse"), "is_group"):
+			lft, rgt = frappe.db.get_all(
+				"Warehouse", filters={"name": filters.get("warehouse")}, fields=["lft", "rgt"], as_list=True
+			)[0]
+			conditions += f"and ifnull(`tabSales Invoice Item`.warehouse, '') in (select name from `tabWarehouse` where lft > {lft} and rgt < {rgt}) "
+		else:
+			conditions += """and ifnull(`tabSales Invoice Item`.warehouse, '') = %(warehouse)s"""
 
 	if filters.get("brand"):
 		conditions += """and ifnull(`tabSales Invoice Item`.brand, '') = %(brand)s"""
@@ -381,7 +387,8 @@ def get_group_by_conditions(filters, doctype):
 
 def get_items(filters, additional_query_columns, additional_conditions=None):
 	conditions = get_conditions(filters, additional_conditions)
-
+	if additional_query_columns:
+		additional_query_columns = "," + ",".join(additional_query_columns)
 	return frappe.db.sql(
 		"""
 		select
