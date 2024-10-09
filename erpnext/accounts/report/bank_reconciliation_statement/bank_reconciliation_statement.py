@@ -32,10 +32,7 @@ def execute(filters=None):
 	amounts_not_reflected_in_system = get_amounts_not_reflected_in_system(filters)
 
 	bank_bal = (
-		flt(balance_as_per_system)
-		- flt(total_debit)
-		+ flt(total_credit)
-		+ amounts_not_reflected_in_system
+		flt(balance_as_per_system) - flt(total_debit) + flt(total_credit) + amounts_not_reflected_in_system
 	)
 
 	data += [
@@ -157,8 +154,8 @@ def get_payment_entries(filters):
 		select
 			"Payment Entry" as payment_document, name as payment_entry,
 			reference_no, reference_date as ref_date,
-			if(paid_to=%(account)s, received_amount, 0) as debit,
-			if(paid_from=%(account)s, paid_amount, 0) as credit,
+			if(paid_to=%(account)s, received_amount_after_tax, 0) as debit,
+			if(paid_from=%(account)s, paid_amount_after_tax, 0) as credit,
 			posting_date, ifnull(party,if(paid_from=%(account)s,paid_to,paid_from)) as against_account, clearance_date,
 			if(paid_to=%(account)s, paid_to_account_currency, paid_from_account_currency) as account_currency
 		from `tabPayment Entry`

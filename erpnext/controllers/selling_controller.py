@@ -20,15 +20,15 @@ class SellingController(StockController):
 		self.flags.ignore_permlevel_for_fields = ["selling_price_list", "price_list_currency"]
 
 	def onload(self):
-		super(SellingController, self).onload()
+		super().onload()
 		if self.doctype in ("Sales Order", "Delivery Note", "Sales Invoice"):
 			for item in self.get("items") + (self.get("packed_items") or []):
 				item.update(get_bin_details(item.item_code, item.warehouse, include_child_warehouses=True))
 
 	def validate(self):
-		super(SellingController, self).validate()
+		super().validate()
 		self.validate_items()
-		if not self.get("is_debit_note"):
+		if not (self.get("is_debit_note") or self.get("is_return")):
 			self.validate_max_discount()
 		self.validate_selling_price()
 		self.set_qty_as_per_stock_uom()
@@ -44,7 +44,7 @@ class SellingController(StockController):
 				self.set_serial_and_batch_bundle(table_field)
 
 	def set_missing_values(self, for_validate=False):
-		super(SellingController, self).set_missing_values(for_validate)
+		super().set_missing_values(for_validate)
 
 		# set contact and address details for customer, if they are not mentioned
 		self.set_missing_lead_customer_details(for_validate=for_validate)
@@ -139,7 +139,7 @@ class SellingController(StockController):
 			self.in_words = money_in_words(amount, self.currency)
 
 	def calculate_commission(self):
-		if not self.meta.get_field("commission_rate") or self.docstatus.is_submitted():
+		if not self.meta.get_field("commission_rate"):
 			return
 
 		self.round_floats_in(self, ("amount_eligible_for_commission", "commission_rate"))
@@ -290,7 +290,10 @@ class SellingController(StockController):
 
 			if flt(item.base_net_rate) < flt(last_valuation_rate_in_sales_uom):
 				throw_message(
-					item.idx, item.item_name, last_valuation_rate_in_sales_uom, "valuation rate (Moving Average)"
+					item.idx,
+					item.item_name,
+					last_valuation_rate_in_sales_uom,
+					"valuation rate (Moving Average)",
 				)
 
 	def get_item_list(self):
@@ -422,7 +425,8 @@ class SellingController(StockController):
 					"Cancelled"
 				]:
 					frappe.throw(
-						_("{0} {1} is cancelled or closed").format(_("Sales Order"), so), frappe.InvalidStatusError
+						_("{0} {1} is cancelled or closed").format(_("Sales Order"), so),
+						frappe.InvalidStatusError,
 					)
 
 				sales_order.update_reserved_qty(so_item_rows)
@@ -431,6 +435,9 @@ class SellingController(StockController):
 		if self.doctype not in ("Delivery Note", "Sales Invoice"):
 			return
 
+		allow_at_arms_length_price = frappe.get_cached_value(
+			"Stock Settings", None, "allow_internal_transfer_at_arms_length_price"
+		)
 		items = self.get("items") + (self.get("packed_items") or [])
 		for d in items:
 			if not frappe.get_cached_value("Item", d.item_code, "is_stock_item"):
@@ -440,7 +447,7 @@ class SellingController(StockController):
 				get_valuation_method(d.item_code) == "Moving Average" and self.get("is_return")
 			):
 				# Get incoming rate based on original item cost based on valuation method
-				qty = flt(d.get("stock_qty") or d.get("actual_qty"))
+				qty = flt(d.get("stock_qty") or d.get("actual_qty") or d.get("qty"))
 
 				if (
 					not d.incoming_rate
@@ -477,6 +484,9 @@ class SellingController(StockController):
 							if d.incoming_rate != incoming_rate:
 								d.incoming_rate = incoming_rate
 						else:
+							if allow_at_arms_length_price:
+								continue
+
 							rate = flt(
 								flt(d.incoming_rate, d.precision("incoming_rate")) * d.conversion_factor,
 								d.precision("rate"),
@@ -534,7 +544,11 @@ class SellingController(StockController):
 		self.make_sl_entries(sl_entries)
 
 	def get_sle_for_source_warehouse(self, item_row):
-		serial_and_batch_bundle = item_row.serial_and_batch_bundle
+		serial_and_batch_bundle = (
+			item_row.serial_and_batch_bundle
+			if not self.is_internal_transfer() or self.docstatus == 1
+			else None
+		)
 		if serial_and_batch_bundle and self.is_internal_transfer() and self.is_return:
 			if self.docstatus == 1:
 				serial_and_batch_bundle = self.make_package_for_transfer(
@@ -626,7 +640,8 @@ class SellingController(StockController):
 		if self.doctype in ["Sales Order", "Quotation"]:
 			for item in self.items:
 				item.gross_profit = flt(
-					((item.base_rate - flt(item.valuation_rate)) * item.stock_qty), self.precision("amount", item)
+					((flt(item.stock_uom_rate) - flt(item.valuation_rate)) * item.stock_qty),
+					self.precision("amount", item),
 				)
 
 	def set_customer_address(self):
@@ -682,7 +697,7 @@ class SellingController(StockController):
 			duplicate_items_msg = _("Item {0} entered multiple times.").format(frappe.bold(d.item_code))
 			duplicate_items_msg += "<br><br>"
 			duplicate_items_msg += _("Please enable {} in {} to allow same item in multiple rows").format(
-				frappe.bold("Allow Item to Be Added Multiple Times in a Transaction"),
+				frappe.bold(_("Allow Item to Be Added Multiple Times in a Transaction")),
 				get_link_to_form("Selling Settings", "Selling Settings"),
 			)
 			if frappe.db.get_value("Item", d.item_code, "is_stock_item") == 1:
@@ -703,9 +718,9 @@ class SellingController(StockController):
 			if d.get("target_warehouse") and d.get("warehouse") == d.get("target_warehouse"):
 				warehouse = frappe.bold(d.get("target_warehouse"))
 				frappe.throw(
-					_("Row {0}: Delivery Warehouse ({1}) and Customer Warehouse ({2}) can not be same").format(
-						d.idx, warehouse, warehouse
-					)
+					_(
+						"Row {0}: Delivery Warehouse ({1}) and Customer Warehouse ({2}) can not be same"
+					).format(d.idx, warehouse, warehouse)
 				)
 
 		if not self.get("is_internal_customer") and any(d.get("target_warehouse") for d in items):
@@ -733,14 +748,10 @@ def get_serial_and_batch_bundle(child, parent):
 	if child.get("use_serial_batch_fields"):
 		return
 
-	if not frappe.db.get_single_value(
-		"Stock Settings", "auto_create_serial_and_batch_bundle_for_outward"
-	):
+	if not frappe.db.get_single_value("Stock Settings", "auto_create_serial_and_batch_bundle_for_outward"):
 		return
 
-	item_details = frappe.db.get_value(
-		"Item", child.item_code, ["has_serial_no", "has_batch_no"], as_dict=1
-	)
+	item_details = frappe.db.get_value("Item", child.item_code, ["has_serial_no", "has_batch_no"], as_dict=1)
 
 	if not item_details.has_serial_no and not item_details.has_batch_no:
 		return
@@ -750,12 +761,12 @@ def get_serial_and_batch_bundle(child, parent):
 			"item_code": child.item_code,
 			"warehouse": child.warehouse,
 			"voucher_type": parent.doctype,
-			"voucher_no": parent.name,
+			"voucher_no": parent.name if parent.docstatus < 2 else None,
 			"voucher_detail_no": child.name,
 			"posting_date": parent.posting_date,
 			"posting_time": parent.posting_time,
 			"qty": child.qty,
-			"type_of_transaction": "Outward" if child.qty > 0 else "Inward",
+			"type_of_transaction": "Outward" if child.qty > 0 and parent.docstatus < 2 else "Inward",
 			"company": parent.company,
 			"do_not_submit": "True",
 		}

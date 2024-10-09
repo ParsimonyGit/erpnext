@@ -98,7 +98,7 @@ def setup_currency_exchange():
 		ces.set("result_key", [])
 		ces.set("req_params", [])
 
-		ces.api_endpoint = "https://frankfurter.app/{transaction_date}"
+		ces.api_endpoint = "https://api.frankfurter.app/{transaction_date}"
 		ces.append("result_key", {"key": "rates"})
 		ces.append("result_key", {"key": "{to_currency}"})
 		ces.append("req_params", {"key": "base", "value": "{from_currency}"})
@@ -146,7 +146,6 @@ def create_default_success_action():
 
 
 def create_default_energy_point_rules():
-
 	for rule in get_default_energy_point_rules():
 		# check if any rule for ref. doctype exists
 		rule_exists = frappe.db.exists(
@@ -199,7 +198,7 @@ def add_standard_navbar_items():
 
 	for item in erpnext_navbar_items:
 		current_labels = [item.get("item_label") for item in current_navbar_items]
-		if not item.get("item_label") in current_labels:
+		if item.get("item_label") not in current_labels:
 			navbar_settings.append("help_dropdown", item)
 
 	for item in current_navbar_items:

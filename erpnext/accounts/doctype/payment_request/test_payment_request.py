@@ -4,10 +4,12 @@
 import unittest
 
 import frappe
+from frappe.tests.utils import FrappeTestCase
 
 from erpnext.accounts.doctype.payment_request.payment_request import make_payment_request
 from erpnext.accounts.doctype.purchase_invoice.test_purchase_invoice import make_purchase_invoice
 from erpnext.accounts.doctype.sales_invoice.test_sales_invoice import create_sales_invoice
+from erpnext.buying.doctype.purchase_order.test_purchase_order import create_purchase_order
 from erpnext.selling.doctype.sales_order.test_sales_order import make_sales_order
 from erpnext.setup.utils import get_exchange_rate
 
@@ -32,7 +34,7 @@ payment_method = [
 ]
 
 
-class TestPaymentRequest(unittest.TestCase):
+class TestPaymentRequest(FrappeTestCase):
 	def setUp(self):
 		if not frappe.db.get_value("Payment Gateway", payment_gateway["gateway"], "name"):
 			frappe.get_doc(payment_gateway).insert(ignore_permissions=True)
@@ -86,6 +88,8 @@ class TestPaymentRequest(unittest.TestCase):
 		pr = make_payment_request(
 			dt="Purchase Invoice",
 			dn=si_usd.name,
+			party_type="Supplier",
+			party="_Test Supplier USD",
 			recipient_id="user@example.com",
 			mute_email=1,
 			payment_gateway_account="_Test Gateway - USD",
@@ -93,10 +97,55 @@ class TestPaymentRequest(unittest.TestCase):
 			return_doc=1,
 		)
 
-		pe = pr.create_payment_entry()
+		pr.create_payment_entry()
 		pr.load_from_db()
 
 		self.assertEqual(pr.status, "Paid")
+
+	def test_multiple_payment_entry_against_purchase_invoice(self):
+		purchase_invoice = make_purchase_invoice(
+			customer="_Test Supplier USD",
+			debit_to="_Test Payable USD - _TC",
+			currency="USD",
+			conversion_rate=50,
+		)
+
+		pr = make_payment_request(
+			dt="Purchase Invoice",
+			party_type="Supplier",
+			party="_Test Supplier USD",
+			dn=purchase_invoice.name,
+			recipient_id="user@example.com",
+			mute_email=1,
+			payment_gateway_account="_Test Gateway - USD",
+			return_doc=1,
+		)
+
+		pr.grand_total = pr.grand_total / 2
+
+		pr.submit()
+		pr.create_payment_entry()
+
+		purchase_invoice.load_from_db()
+		self.assertEqual(purchase_invoice.status, "Partly Paid")
+
+		pr = make_payment_request(
+			dt="Purchase Invoice",
+			party_type="Supplier",
+			party="_Test Supplier USD",
+			dn=purchase_invoice.name,
+			recipient_id="user@example.com",
+			mute_email=1,
+			payment_gateway_account="_Test Gateway - USD",
+			return_doc=1,
+		)
+
+		pr.save()
+		pr.submit()
+		pr.create_payment_entry()
+
+		purchase_invoice.load_from_db()
+		self.assertEqual(purchase_invoice.status, "Paid")
 
 	def test_payment_entry(self):
 		frappe.db.set_value(
@@ -158,7 +207,7 @@ class TestPaymentRequest(unittest.TestCase):
 
 		self.assertTrue(gl_entries)
 
-		for i, gle in enumerate(gl_entries):
+		for _i, gle in enumerate(gl_entries):
 			self.assertEqual(expected_gle[gle.account][0], gle.account)
 			self.assertEqual(expected_gle[gle.account][1], gle.debit)
 			self.assertEqual(expected_gle[gle.account][2], gle.credit)
@@ -213,3 +262,19 @@ class TestPaymentRequest(unittest.TestCase):
 		# Try to make Payment Request more than SO amount, should give validation
 		pr2.grand_total = 900
 		self.assertRaises(frappe.ValidationError, pr2.save)
+
+	def test_conversion_on_foreign_currency_accounts(self):
+		po_doc = create_purchase_order(supplier="_Test Supplier USD", currency="USD", do_not_submit=1)
+		po_doc.conversion_rate = 80
+		po_doc.items[0].qty = 1
+		po_doc.items[0].rate = 10
+		po_doc.save().submit()
+
+		pr = make_payment_request(dt=po_doc.doctype, dn=po_doc.name, recipient_id="nabin@erpnext.com")
+		pr = frappe.get_doc(pr).save().submit()
+
+		pe = pr.create_payment_entry()
+		self.assertEqual(pe.base_paid_amount, 800)
+		self.assertEqual(pe.paid_amount, 800)
+		self.assertEqual(pe.base_received_amount, 800)
+		self.assertEqual(pe.received_amount, 10)

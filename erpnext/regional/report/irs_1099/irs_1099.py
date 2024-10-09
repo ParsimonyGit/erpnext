@@ -190,7 +190,7 @@ def irs_1099_print(filters):
 			"Supplier", row.supplier
 		)
 		row["payments"] = fmt_money(row["payments"], precision=0, currency="USD")
-		pdf = get_pdf(render_template(template, row), output=output if output else None)
+		get_pdf(render_template(template, row), output=output if output else None)
 
 	frappe.local.response.filename = (
 		f"{filters.fiscal_year} {filters.company} IRS 1099 Forms{IRS_1099_FORMS_FILE_EXTENSION}"

@@ -8,7 +8,7 @@ from frappe import _, qb
 from frappe.query_builder import Criterion
 
 
-class PaymentLedger(object):
+class PaymentLedger:
 	def __init__(self, filters=None):
 		self.filters = filters
 		self.columns, self.data = [], []
@@ -210,7 +210,7 @@ class PaymentLedger(object):
 				)
 			)
 		self.columns.append(
-			dict(label=_("Currency"), fieldname="currency", fieldtype="Currency", hidden=True)
+			dict(label=_("Currency"), fieldname="currency", fieldtype="Link", options="Currency", hidden=True)
 		)
 
 	def run(self):

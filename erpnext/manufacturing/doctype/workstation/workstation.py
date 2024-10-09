@@ -55,6 +55,9 @@ class Workstation(Document):
 		hour_rate_electricity: DF.Currency
 		hour_rate_labour: DF.Currency
 		hour_rate_rent: DF.Currency
+		off_status_image: DF.AttachImage | None
+		on_status_image: DF.AttachImage | None
+		plant_floor: DF.Link | None
 		production_capacity: DF.Int
 		working_hours: DF.Table[WorkstationWorkingHour]
 		workstation_name: DF.Data
@@ -134,7 +137,8 @@ class Workstation(Document):
 
 			if existing:
 				frappe.throw(
-					_("Row #{0}: Timings conflicts with row {1}").format(d.idx, comma_and(existing)), OverlapError
+					_("Row #{0}: Timings conflicts with row {1}").format(d.idx, comma_and(existing)),
+					OverlapError,
 				)
 
 	def update_bom_operation(self):
@@ -352,7 +356,9 @@ def check_workstation_for_holiday(workstation, from_datetime, to_datetime):
 
 		if applicable_holidays:
 			frappe.throw(
-				_("Workstation is closed on the following dates as per Holiday List: {0}").format(holiday_list)
+				_("Workstation is closed on the following dates as per Holiday List: {0}").format(
+					holiday_list
+				)
 				+ "\n"
 				+ "\n".join(applicable_holidays),
 				WorkstationHolidayError,

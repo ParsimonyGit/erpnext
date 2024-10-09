@@ -1,7 +1,7 @@
 import frappe
 from frappe import qb
 from frappe.tests.utils import FrappeTestCase
-from frappe.utils import add_days, flt, nowdate
+from frappe.utils import flt, nowdate
 
 from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_delivery_note
 from erpnext.accounts.doctype.sales_invoice.test_sales_invoice import create_sales_invoice
@@ -86,11 +86,14 @@ class TestGrossProfit(FrappeTestCase):
 			self.customer = customer.name
 
 	def create_sales_invoice(
-		self, qty=1, rate=100, posting_date=nowdate(), do_not_save=False, do_not_submit=False
+		self, qty=1, rate=100, posting_date=None, do_not_save=False, do_not_submit=False
 	):
 		"""
 		Helper function to populate default values in sales invoice
 		"""
+		if posting_date is None:
+			posting_date = nowdate()
+
 		sinv = create_sales_invoice(
 			qty=qty,
 			rate=rate,
@@ -115,11 +118,14 @@ class TestGrossProfit(FrappeTestCase):
 		return sinv
 
 	def create_delivery_note(
-		self, item=None, qty=1, rate=100, posting_date=nowdate(), do_not_save=False, do_not_submit=False
+		self, item=None, qty=1, rate=100, posting_date=None, do_not_save=False, do_not_submit=False
 	):
 		"""
 		Helper function to populate default values in Delivery Note
 		"""
+		if posting_date is None:
+			posting_date = nowdate()
+
 		dnote = create_delivery_note(
 			company=self.company,
 			customer=self.customer,
@@ -552,3 +558,50 @@ class TestGrossProfit(FrappeTestCase):
 		}
 		gp_entry = [x for x in data if x.parent_invoice == sinv.name]
 		self.assertDictContainsSubset(expected_entry, gp_entry[0])
+
+	def test_valuation_rate_without_previous_sle(self):
+		"""
+		Test Valuation rate calculation when stock ledger is empty and invoices are against different warehouses
+		"""
+		stock_settings = frappe.get_doc("Stock Settings")
+		stock_settings.valuation_method = "FIFO"
+		stock_settings.save()
+
+		item = create_item(
+			item_code="_Test Wirebound Notebook",
+			is_stock_item=1,
+		)
+		item.allow_negative_stock = True
+		item.save()
+		self.item = item.item_code
+
+		item.reload()
+		item.valuation_rate = 1900
+		item.save()
+		sinv1 = self.create_sales_invoice(qty=1, rate=2000, posting_date=nowdate(), do_not_submit=True)
+		sinv1.update_stock = 1
+		sinv1.set_warehouse = self.warehouse
+		sinv1.items[0].warehouse = self.warehouse
+		sinv1.save().submit()
+
+		item.reload()
+		item.valuation_rate = 1800
+		item.save()
+		sinv2 = self.create_sales_invoice(qty=1, rate=2000, posting_date=nowdate(), do_not_submit=True)
+		sinv2.update_stock = 1
+		sinv2.set_warehouse = self.finished_warehouse
+		sinv2.items[0].warehouse = self.finished_warehouse
+		sinv2.save().submit()
+
+		filters = frappe._dict(
+			company=self.company, from_date=nowdate(), to_date=nowdate(), group_by="Invoice"
+		)
+		columns, data = execute(filters=filters)
+
+		item_from_sinv1 = [x for x in data if x.parent_invoice == sinv1.name]
+		self.assertEqual(len(item_from_sinv1), 1)
+		self.assertEqual(1900, item_from_sinv1[0].valuation_rate)
+
+		item_from_sinv2 = [x for x in data if x.parent_invoice == sinv2.name]
+		self.assertEqual(len(item_from_sinv2), 1)
+		self.assertEqual(1800, item_from_sinv2[0].valuation_rate)

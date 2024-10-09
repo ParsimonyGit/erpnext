@@ -128,9 +128,7 @@ class JobCard(Document):
 	# end: auto-generated types
 
 	def onload(self):
-		excess_transfer = frappe.db.get_single_value(
-			"Manufacturing Settings", "job_card_excess_transfer"
-		)
+		excess_transfer = frappe.db.get_single_value("Manufacturing Settings", "job_card_excess_transfer")
 		self.set_onload("job_card_excess_transfer", excess_transfer)
 		self.set_onload("work_order_closed", self.is_work_order_closed())
 		self.set_onload("has_stock_entry", self.has_stock_entry())
@@ -159,9 +157,7 @@ class JobCard(Document):
 
 		wo_qty = flt(frappe.get_cached_value("Work Order", self.work_order, "qty"))
 
-		completed_qty = flt(
-			frappe.db.get_value("Work Order Operation", self.operation_id, "completed_qty")
-		)
+		completed_qty = flt(frappe.db.get_value("Work Order Operation", self.operation_id, "completed_qty"))
 
 		over_production_percentage = flt(
 			frappe.db.get_single_value("Manufacturing Settings", "overproduction_percentage_for_work_order")
@@ -218,7 +214,11 @@ class JobCard(Document):
 				if d.to_time and get_datetime(d.from_time) > get_datetime(d.to_time):
 					frappe.throw(_("Row {0}: From time must be less than to time").format(d.idx))
 
-				data = self.get_overlap_for(d)
+				open_job_cards = []
+				if d.get("employee"):
+					open_job_cards = self.get_open_job_cards(d.get("employee"))
+
+				data = self.get_overlap_for(d, open_job_cards=open_job_cards)
 				if data:
 					frappe.throw(
 						_("Row {0}: From Time and To Time of {1} is overlapping with {2}").format(
@@ -239,12 +239,12 @@ class JobCard(Document):
 		for row in self.sub_operations:
 			self.total_completed_qty += row.completed_qty
 
-	def get_overlap_for(self, args):
+	def get_overlap_for(self, args, open_job_cards=None):
 		time_logs = []
 
 		time_logs.extend(self.get_time_logs(args, "Job Card Time Log"))
 
-		time_logs.extend(self.get_time_logs(args, "Job Card Scheduled Time"))
+		time_logs.extend(self.get_time_logs(args, "Job Card Scheduled Time", open_job_cards=open_job_cards))
 
 		if not time_logs:
 			return {}
@@ -308,7 +308,7 @@ class JobCard(Document):
 			return True
 		return overlap
 
-	def get_time_logs(self, args, doctype):
+	def get_time_logs(self, args, doctype, open_job_cards=None):
 		jc = frappe.qb.DocType("Job Card")
 		jctl = frappe.qb.DocType(doctype)
 
@@ -345,8 +345,14 @@ class JobCard(Document):
 		if self.workstation:
 			query = query.where(jc.workstation == self.workstation)
 
-		if args.get("employee") and doctype == "Job Card Time Log":
-			query = query.where(jctl.employee == args.get("employee"))
+		if args.get("employee"):
+			if not open_job_cards and doctype == "Job Card Scheduled Time":
+				return []
+
+			if doctype == "Job Card Time Log":
+				query = query.where(jctl.employee == args.get("employee"))
+			else:
+				query = query.where(jc.name.isin(open_job_cards))
 
 		if doctype != "Job Card Time Log":
 			query = query.where(jc.total_time_in_mins == 0)
@@ -354,6 +360,27 @@ class JobCard(Document):
 		time_logs = query.run(as_dict=True)
 
 		return time_logs
+
+	def get_open_job_cards(self, employee):
+		jc = frappe.qb.DocType("Job Card")
+		jctl = frappe.qb.DocType("Job Card Time Log")
+
+		query = (
+			frappe.qb.from_(jc)
+			.left_join(jctl)
+			.on(jc.name == jctl.parent)
+			.select(jc.name)
+			.where(
+				(jctl.parent == jc.name)
+				& (jc.workstation == self.workstation)
+				& (jctl.employee == employee)
+				& (jc.docstatus < 1)
+				& (jc.name != self.name)
+			)
+		)
+
+		jobs = query.run(as_dict=True)
+		return [job.get("name") for job in jobs] if jobs else []
 
 	def get_workstation_based_on_available_slot(self, existing_time_logs) -> dict:
 		workstations = get_workstations(self.workstation_type)
@@ -454,7 +481,9 @@ class JobCard(Document):
 
 				# If remaining time fit in workstation time logs else split hours as per workstation time
 				if time_in_mins > row.remaining_time_in_mins:
-					row.planned_end_time = add_to_date(row.planned_start_time, minutes=row.remaining_time_in_mins)
+					row.planned_end_time = add_to_date(
+						row.planned_start_time, minutes=row.remaining_time_in_mins
+					)
 					row.remaining_time_in_mins = 0
 				else:
 					row.planned_end_time = add_to_date(row.planned_start_time, minutes=time_in_mins)
@@ -574,7 +603,9 @@ class JobCard(Document):
 					row.completed_time = row.completed_time / len(set(operation_deatils.employee))
 
 					if operation_deatils.completed_qty:
-						row.completed_qty = operation_deatils.completed_qty / len(set(operation_deatils.employee))
+						row.completed_qty = operation_deatils.completed_qty / len(
+							set(operation_deatils.employee)
+						)
 			else:
 				row.status = "Pending"
 				row.completed_time = 0.0
@@ -646,10 +677,7 @@ class JobCard(Document):
 			)
 
 	def validate_job_card(self):
-		if (
-			self.work_order
-			and frappe.get_cached_value("Work Order", self.work_order, "status") == "Stopped"
-		):
+		if self.work_order and frappe.get_cached_value("Work Order", self.work_order, "status") == "Stopped":
 			frappe.throw(
 				_("Transaction not allowed against stopped Work Order {0}").format(
 					get_link_to_form("Work Order", self.work_order)
@@ -668,9 +696,7 @@ class JobCard(Document):
 			flt(self.total_completed_qty, precision) + flt(self.process_loss_qty, precision)
 		)
 
-		if self.for_quantity and flt(total_completed_qty, precision) != flt(
-			self.for_quantity, precision
-		):
+		if self.for_quantity and flt(total_completed_qty, precision) != flt(self.for_quantity, precision):
 			total_completed_qty_label = bold(_("Total Completed Qty"))
 			qty_to_manufacture = bold(_("Qty to Manufacture"))
 
@@ -730,9 +756,8 @@ class JobCard(Document):
 			return
 
 		for_quantity, time_in_mins, process_loss_qty = 0, 0, 0
-		from_time_list, to_time_list = [], []
+		_from_time_list, _to_time_list = [], []
 
-		field = "operation_id"
 		data = self.get_current_operation_data()
 		if data and len(data) > 0:
 			for_quantity = flt(data[0].completed_qty)
@@ -768,9 +793,7 @@ class JobCard(Document):
 		if wo.produced_qty > for_quantity + process_loss_qty:
 			first_part_msg = _(
 				"The {0} {1} is used to calculate the valuation cost for the finished good {2}."
-			).format(
-				frappe.bold(_("Job Card")), frappe.bold(self.name), frappe.bold(self.production_item)
-			)
+			).format(frappe.bold(_("Job Card")), frappe.bold(self.name), frappe.bold(self.production_item))
 
 			second_part_msg = _(
 				"Kindly cancel the Manufacturing Entries first against the work order {0}."
@@ -837,9 +860,7 @@ class JobCard(Document):
 			from frappe.query_builder.functions import Sum
 
 			job_card_items_transferred_qty = {}
-			job_card_items = [
-				x.get("job_card_item") for x in ste_doc.get("items") if x.get("job_card_item")
-			]
+			job_card_items = [x.get("job_card_item") for x in ste_doc.get("items") if x.get("job_card_item")]
 
 			if job_card_items:
 				se = frappe.qb.DocType("Stock Entry")
@@ -972,9 +993,7 @@ class JobCard(Document):
 
 	def set_wip_warehouse(self):
 		if not self.wip_warehouse:
-			self.wip_warehouse = frappe.db.get_single_value(
-				"Manufacturing Settings", "default_wip_warehouse"
-			)
+			self.wip_warehouse = frappe.db.get_single_value("Manufacturing Settings", "default_wip_warehouse")
 
 	def validate_operation_id(self):
 		if (
@@ -1014,7 +1033,7 @@ class JobCard(Document):
 			order_by="sequence_id, idx",
 		)
 
-		message = "Job Card {0}: As per the sequence of the operations in the work order {1}".format(
+		message = "Job Card {}: As per the sequence of the operations in the work order {}".format(
 			bold(self.name), bold(get_link_to_form("Work Order", self.work_order))
 		)
 
@@ -1085,7 +1104,7 @@ def get_operations(doctype, txt, searchfield, start, page_len, filters):
 		return []
 	args = {"parent": filters.get("work_order")}
 	if txt:
-		args["operation"] = ("like", "%{0}%".format(txt))
+		args["operation"] = ("like", f"%{txt}%")
 
 	return frappe.get_all(
 		"Work Order Operation",
@@ -1206,16 +1225,14 @@ def get_job_details(start, end, filters=None):
 	conditions = get_filters_cond("Job Card", filters, [])
 
 	job_cards = frappe.db.sql(
-		""" SELECT `tabJob Card`.name, `tabJob Card`.work_order,
+		f""" SELECT `tabJob Card`.name, `tabJob Card`.work_order,
 			`tabJob Card`.status, ifnull(`tabJob Card`.remarks, ''),
 			min(`tabJob Card Time Log`.from_time) as from_time,
 			max(`tabJob Card Time Log`.to_time) as to_time
 		FROM `tabJob Card` , `tabJob Card Time Log`
 		WHERE
-			`tabJob Card`.name = `tabJob Card Time Log`.parent {0}
-			group by `tabJob Card`.name""".format(
-			conditions
-		),
+			`tabJob Card`.name = `tabJob Card Time Log`.parent {conditions}
+			group by `tabJob Card`.name""",
 		as_dict=1,
 	)
 

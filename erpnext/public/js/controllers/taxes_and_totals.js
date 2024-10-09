@@ -128,7 +128,7 @@ erpnext.taxes_and_totals = class TaxesAndTotals extends erpnext.payments {
 	calculate_item_values() {
 		var me = this;
 		if (!this.discount_amount_applied) {
-			for (const item of this.frm._items || []) {
+			for (const item of this.frm.doc.items || []) {
 				frappe.model.round_floats_in(item);
 				item.net_rate = item.rate;
 				item.qty = item.qty === undefined ? (me.frm.doc.is_return ? -1 : 1) : item.qty;
@@ -210,10 +210,12 @@ erpnext.taxes_and_totals = class TaxesAndTotals extends erpnext.payments {
 			});
 		}
 
-		frappe.db.get_single_value("Accounts Settings", "round_row_wise_tax")
-			.then((round_row_wise_tax) => {
-				frappe.flags.round_row_wise_tax = round_row_wise_tax;
-			})
+		frappe.call({
+			method: "erpnext.controllers.taxes_and_totals.get_rounding_tax_settings",
+			callback: function(r) {
+				frappe.flags.round_off_settings = r.message;
+			}
+		});
 	}
 
 	determine_exclusive_rate() {
@@ -225,7 +227,7 @@ erpnext.taxes_and_totals = class TaxesAndTotals extends erpnext.payments {
 		});
 		if(has_inclusive_tax==false) return;
 
-		$.each(me.frm._items || [], function(n, item) {
+		$.each(this.frm.doc.items || [], function(n, item) {
 			var item_tax_map = me._load_item_tax_rate(item.item_tax_rate);
 			var cumulated_tax_fraction = 0.0;
 			var total_inclusive_tax_amount_per_qty = 0;
@@ -628,7 +630,7 @@ erpnext.taxes_and_totals = class TaxesAndTotals extends erpnext.payments {
 
 	_cleanup() {
 		this.frm.doc.base_in_words = this.frm.doc.in_words = "";
-		let items = this.frm._items;
+		let items = this.frm.doc.items;
 
 		if(items && items.length) {
 			if(!frappe.meta.get_docfield(items[0].doctype, "item_tax_amount", this.frm.doctype)) {

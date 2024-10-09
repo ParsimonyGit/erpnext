@@ -14,7 +14,7 @@ def execute(filters=None):
 	return OpportunitySummaryBySalesStage(filters).run()
 
 
-class OpportunitySummaryBySalesStage(object):
+class OpportunitySummaryBySalesStage:
 	def __init__(self, filters=None):
 		self.filters = frappe._dict(filters or {})
 
@@ -108,7 +108,9 @@ class OpportunitySummaryBySalesStage(object):
 			self.grouped_data = []
 
 			grouping_key = lambda o: (o["sales_stage"], o[based_on])  # noqa
-			for (sales_stage, _based_on), rows in groupby(self.query_result, grouping_key):
+			for (sales_stage, _based_on), rows in groupby(
+				sorted(self.query_result, key=grouping_key), key=grouping_key
+			):
 				self.grouped_data.append(
 					{
 						"sales_stage": sales_stage,
@@ -199,7 +201,6 @@ class OpportunitySummaryBySalesStage(object):
 		return filters
 
 	def get_chart_data(self):
-		labels = []
 		datasets = []
 		values = [0] * len(self.sales_stage_list)
 

@@ -12,18 +12,24 @@ frappe.ui.form.on("Company", {
 				}
 			});
 		}
-
-		frm.call("check_if_transactions_exist").then((r) => {
-			frm.toggle_enable("default_currency", !r.message);
-		});
+		if (!frm.doc.__islocal) {
+			frm.call("check_if_transactions_exist").then((r) => {
+				frm.toggle_enable("default_currency", !r.message);
+			});
+		}
 	},
 	setup: function (frm) {
 		frm.__rename_queue = "long";
-		erpnext.company.setup_queries(frm);
 
 		frm.set_query("parent_company", function () {
 			return {
 				filters: { is_group: 1 },
+			};
+		});
+
+		frm.set_query("default_operating_cost_account", function (doc) {
+			return {
+				filters: { company: doc.name, root_type: "Expense" },
 			};
 		});
 
@@ -74,6 +80,8 @@ frappe.ui.form.on("Company", {
 	},
 
 	refresh: function (frm) {
+		erpnext.company.setup_queries(frm);
+
 		frm.toggle_display("address_html", !frm.is_new());
 
 		if (!frm.is_new()) {
@@ -251,7 +259,10 @@ erpnext.company.setup_queries = function (frm) {
 			["discount_allowed_account", { root_type: "Expense" }],
 			["discount_received_account", { root_type: "Income" }],
 			["exchange_gain_loss_account", { root_type: ["in", ["Expense", "Income"]] }],
-			["unrealized_exchange_gain_loss_account", { root_type: ["in", ["Expense", "Income"]] }],
+			[
+				"unrealized_exchange_gain_loss_account",
+				{ root_type: ["in", ["Expense", "Income", "Equity", "Liability"]] },
+			],
 			[
 				"accumulated_depreciation_account",
 				{ root_type: "Asset", account_type: "Accumulated Depreciation" },

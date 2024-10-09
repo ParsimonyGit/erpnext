@@ -48,17 +48,18 @@
 						<br>
 					{% } %}
 
-					<br>{%= __("Remarks") %}: {%= data[i].remarks %}
-					{% if(data[i].bill_no) { %}
+					{% if(data[i].remarks) { %}
+						<br>{%= __("Remarks") %}: {%= data[i].remarks %}
+					{% } else if(data[i].bill_no) { %}
 						<br>{%= __("Supplier Invoice No") %}: {%= data[i].bill_no %}
 					{% } %}
 					</span>
 				</td>
 				<td style="text-align: right">
-					{%= format_currency(data[i].debit, filters.presentation_currency) %}
+					{%= format_currency(data[i].debit, filters.presentation_currency || data[i].account_currency) %}
 				</td>
 				<td style="text-align: right">
-					{%= format_currency(data[i].credit, filters.presentation_currency) %}
+					{%= format_currency(data[i].credit, filters.presentation_currency || data[i].account_currency) %}
 				</td>
 			{% } else { %}
 				<td></td>

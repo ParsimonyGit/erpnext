@@ -95,7 +95,7 @@ def execute(filters=None):
 		filters.periodicity, period_list, filters.accumulated_values, company=filters.company
 	)
 
-	chart = get_chart_data(filters, columns, asset, liability, equity)
+	chart = get_chart_data(filters, columns, asset, liability, equity, currency)
 
 	report_summary, primitive_summary = get_report_summary(
 		period_list, asset, liability, equity, provisional_profit_loss, currency, filters
@@ -109,7 +109,7 @@ def get_provisional_profit_loss(
 ):
 	provisional_profit_loss = {}
 	total_row = {}
-	if asset and (liability or equity):
+	if asset:
 		total = total_row_total = 0
 		currency = currency or frappe.get_cached_value("Company", company, "default_currency")
 		total_row = {
@@ -122,14 +122,16 @@ def get_provisional_profit_loss(
 
 		for period in period_list:
 			key = period if consolidated else period.key
-			effective_liability = 0.0
-			if liability:
-				effective_liability += flt(liability[-2].get(key))
-			if equity:
-				effective_liability += flt(equity[-2].get(key))
+			total_assets = flt(asset[0].get(key))
+			effective_liability = 0.00
 
-			provisional_profit_loss[key] = flt(asset[-2].get(key)) - effective_liability
-			total_row[key] = effective_liability + provisional_profit_loss[key]
+			if liability:
+				effective_liability += flt(liability[0].get(key))
+			if equity:
+				effective_liability += flt(equity[0].get(key))
+
+			provisional_profit_loss[key] = total_assets - effective_liability
+			total_row[key] = provisional_profit_loss[key] + effective_liability
 
 			if provisional_profit_loss[key]:
 				has_value = True
@@ -180,7 +182,6 @@ def get_report_summary(
 	filters,
 	consolidated=False,
 ):
-
 	net_asset, net_liability, net_equity, net_provisional_profit_loss = 0.0, 0.0, 0.0, 0.0
 
 	if filters.get("accumulated_values"):
@@ -220,7 +221,7 @@ def get_report_summary(
 	], (net_asset - net_liability + net_equity)
 
 
-def get_chart_data(filters, columns, asset, liability, equity):
+def get_chart_data(filters, columns, asset, liability, equity, currency):
 	labels = [d.get("label") for d in columns[2:]]
 
 	asset_data, liability_data, equity_data = [], [], []
@@ -247,5 +248,9 @@ def get_chart_data(filters, columns, asset, liability, equity):
 		chart["type"] = "bar"
 	else:
 		chart["type"] = "line"
+
+	chart["fieldtype"] = "Currency"
+	chart["options"] = "currency"
+	chart["currency"] = currency
 
 	return chart

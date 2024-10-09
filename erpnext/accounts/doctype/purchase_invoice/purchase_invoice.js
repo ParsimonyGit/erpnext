@@ -77,31 +77,6 @@ erpnext.accounts.PurchaseInvoice = class PurchaseInvoice extends erpnext.buying.
 			erpnext.accounts.ledger_preview.show_stock_ledger_preview(this.frm);
 		}
 
-		if (this.frm.doc.repost_required && this.frm.doc.docstatus === 1) {
-			this.frm.set_intro(
-				__(
-					"Accounting entries for this invoice need to be reposted. Please click on 'Repost' button to update."
-				)
-			);
-			this.frm
-				.add_custom_button(__("Repost Accounting Entries"), () => {
-					this.frm.call({
-						doc: this.frm.doc,
-						method: "repost_accounting_entries",
-						freeze: true,
-						freeze_message: __("Reposting..."),
-						callback: (r) => {
-							if (!r.exc) {
-								frappe.msgprint(__("Accounting Entries are reposted."));
-								me.frm.refresh();
-							}
-						},
-					});
-				})
-				.removeClass("btn-default")
-				.addClass("btn-warning");
-		}
-
 		if (!doc.is_return && doc.docstatus == 1 && doc.outstanding_amount != 0) {
 			if (doc.on_hold) {
 				this.frm.add_custom_button(
@@ -485,10 +460,12 @@ function hide_fields(doc) {
 
 	var item_fields_stock = ["warehouse_section", "received_qty", "rejected_qty"];
 
-	cur_frm.fields_dict["items"].grid.set_column_disp(
-		item_fields_stock,
-		cint(doc.update_stock) == 1 || cint(doc.is_return) == 1 ? true : false
-	);
+	if (cur_frm.fields_dict["items"]) {
+		cur_frm.fields_dict["items"].grid.set_column_disp(
+			item_fields_stock,
+			cint(doc.update_stock) == 1 || cint(doc.is_return) == 1 ? true : false
+		);
+	}
 
 	cur_frm.refresh_fields();
 }
@@ -671,8 +648,8 @@ frappe.ui.form.on("Purchase Invoice", {
 	},
 
 	onload: function (frm) {
-		if (frm.doc.__onload && frm.is_new()) {
-			if (frm.doc.supplier) {
+		if (frm.doc.__onload && frm.doc.supplier) {
+			if (frm.is_new()) {
 				frm.doc.apply_tds = frm.doc.__onload.supplier_tds ? 1 : 0;
 			}
 			if (!frm.doc.__onload.supplier_tds) {

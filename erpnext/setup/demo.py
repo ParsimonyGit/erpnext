@@ -150,7 +150,6 @@ def convert_order_to_invoices():
 				document, filters={"docstatus": 1}, fields=["name", "transaction_date"], limit=6
 			)
 		):
-
 			if document == "Purchase Order":
 				invoice = make_purchase_invoice(order.name)
 			elif document == "Sales Order":
@@ -206,8 +205,11 @@ def clear_demo_record(document):
 		if key not in valid_columns:
 			filters.pop(key, None)
 
-	doc = frappe.get_doc(document_type, filters)
-	doc.delete(ignore_permissions=True)
+	try:
+		doc = frappe.get_doc(document_type, filters)
+		doc.delete(ignore_permissions=True)
+	except frappe.exceptions.DoesNotExistError:
+		pass
 
 
 def delete_company(company):
@@ -217,7 +219,7 @@ def delete_company(company):
 
 def read_data_file_using_hooks(doctype):
 	path = os.path.join(os.path.dirname(__file__), "demo_data")
-	with open(os.path.join(path, doctype + ".json"), "r") as f:
+	with open(os.path.join(path, doctype + ".json")) as f:
 		data = f.read()
 
 	return data
