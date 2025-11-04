@@ -9,7 +9,7 @@ from frappe.desk.reportview import get_match_cond
 from frappe.model.document import Document
 from frappe.query_builder import Interval
 from frappe.query_builder.functions import Count, CurDate, Date, Sum, UnixTimestamp
-from frappe.utils import add_days, flt, get_datetime, get_time, get_url, nowtime, today
+from frappe.utils import add_days, flt, get_datetime, get_link_to_form, get_time, get_url, nowtime, today
 from frappe.utils.user import is_website_user
 
 from erpnext import get_default_company
@@ -62,6 +62,7 @@ class Project(Document):
 		sales_order: DF.Link | None
 		second_email: DF.Time | None
 		status: DF.Literal["Open", "Completed", "Cancelled"]
+		subject: DF.Data | None
 		to_time: DF.Time | None
 		total_billable_amount: DF.Currency
 		total_billed_amount: DF.Currency
@@ -86,21 +87,19 @@ class Project(Document):
 			),
 		)
 
-		self.update_costing()
-
 	def before_print(self, settings=None):
 		self.onload()
 
 	def validate(self):
 		if not self.is_new():
-			self.copy_from_template()
+			self.copy_from_template()  # nosemgrep
 		self.send_welcome_email()
 		self.update_costing()
 		self.update_percent_complete()
 		self.validate_from_to_dates("expected_start_date", "expected_end_date")
 		self.validate_from_to_dates("actual_start_date", "actual_end_date")
 
-	def copy_from_template(self):
+	def copy_from_template(self):  # nosemgrep
 		"""
 		Copy tasks from template
 		"""
@@ -205,7 +204,7 @@ class Project(Document):
 		self.db_update()
 
 	def after_insert(self):
-		self.copy_from_template()
+		self.copy_from_template()  # nosemgrep
 		if self.sales_order:
 			frappe.db.set_value("Sales Order", self.sales_order, "project", self.name)
 
@@ -324,37 +323,50 @@ class Project(Document):
 		self.total_sales_amount = total_sales_amount and total_sales_amount[0][0] or 0
 
 	def update_billed_amount(self):
+		self.total_billed_amount = self.get_billed_amount_from_parent() + self.get_billed_amount_from_child()
+
+	def get_billed_amount_from_parent(self):
 		total_billed_amount = frappe.db.sql(
-			"""select sum(base_net_total)
-			from `tabSales Invoice` where project = %s and docstatus=1""",
+			"""select sum(base_net_amount)
+			from `tabSales Invoice` si join `tabSales Invoice Item` si_item on si_item.parent = si.name
+				where si_item.project is null
+				and si.project is not null
+				and si.project = %s
+				and si.docstatus = 1""",
 			self.name,
 		)
 
-		self.total_billed_amount = total_billed_amount and total_billed_amount[0][0] or 0
+		return total_billed_amount and total_billed_amount[0][0] or 0
+
+	def get_billed_amount_from_child(self):
+		total_billed_amount = frappe.db.sql(
+			"""select sum(base_net_amount)
+			from `tabSales Invoice Item`
+				where project = %s
+				and docstatus = 1""",
+			self.name,
+		)
+
+		return total_billed_amount and total_billed_amount[0][0] or 0
 
 	def after_rename(self, old_name, new_name, merge=False):
 		if old_name == self.copied_from:
 			frappe.db.set_value("Project", new_name, "copied_from", new_name)
 
 	def send_welcome_email(self):
-		url = get_url(f"/project/?name={self.name}")
-		messages = (
-			_("You have been invited to collaborate on the project: {0}").format(self.name),
-			url,
-			_("Join"),
-		)
+		label = f"{self.project_name} ({self.name})"
+		url = get_link_to_form(self.doctype, self.name, label)
 
-		content = """
-		<p>{0}.</p>
-		<p><a href="{1}">{2}</a></p>
-		"""
+		content = "<p>{}</p>".format(
+			_("You have been invited to collaborate on the project: {0}").format(url)
+		)
 
 		for user in self.users:
 			if user.welcome_email_sent == 0:
 				frappe.sendmail(
 					user.user,
 					subject=_("Project Collaboration Invitation"),
-					content=content.format(*messages),
+					content=content,
 				)
 				user.welcome_email_sent = 1
 
@@ -595,8 +607,6 @@ def send_project_update_email_to_users(project):
 		}
 	).insert()
 
-	subject = "For project %s, update your status" % (project)
-
 	incoming_email_account = frappe.db.get_value(
 		"Email Account", dict(enable_incoming=1, default_incoming=1), "email_id"
 	)
@@ -604,7 +614,7 @@ def send_project_update_email_to_users(project):
 	frappe.sendmail(
 		recipients=get_users_email(doc),
 		message=doc.message,
-		subject=_(subject),
+		subject=doc.subject,
 		reference_doctype=project_update.doctype,
 		reference_name=project_update.name,
 		reply_to=incoming_email_account,
@@ -676,31 +686,8 @@ def update_project_sales_billing():
 		return
 
 	# Else simply fallback to Daily
-	exists_query = "(SELECT 1 from `tab{doctype}` where docstatus = 1 and project = `tabProject`.name)"
-	project_map = {}
-	for project_details in frappe.db.sql(
-		"""
-			SELECT name, 1 as order_exists, null as invoice_exists from `tabProject` where
-			exists {order_exists}
-			union
-			SELECT name, null as order_exists, 1 as invoice_exists from `tabProject` where
-			exists {invoice_exists}
-		""".format(
-			order_exists=exists_query.format(doctype="Sales Order"),
-			invoice_exists=exists_query.format(doctype="Sales Invoice"),
-		),
-		as_dict=True,
-	):
-		project = project_map.setdefault(
-			project_details.name, frappe.get_doc("Project", project_details.name)
-		)
-		if project_details.order_exists:
-			project.update_sales_amount()
-		if project_details.invoice_exists:
-			project.update_billed_amount()
-
-	for project in project_map.values():
-		project.save()
+	for project in frappe.get_all("Project", filters={"status": ["!=", "Cancelled"]}):
+		frappe.get_doc("Project", project.name).save()
 
 
 @frappe.whitelist()
@@ -751,7 +738,6 @@ def get_users_email(doc):
 def calculate_total_purchase_cost(project: str | None = None):
 	if project:
 		pitem = qb.DocType("Purchase Invoice Item")
-		frappe.qb.DocType("Purchase Invoice Item")
 		total_purchase_cost = (
 			qb.from_(pitem)
 			.select(Sum(pitem.base_net_amount))
@@ -763,12 +749,7 @@ def calculate_total_purchase_cost(project: str | None = None):
 
 
 @frappe.whitelist()
-def recalculate_project_total_purchase_cost(project: str | None = None):
-	if project:
-		total_purchase_cost = calculate_total_purchase_cost(project)
-		frappe.db.set_value(
-			"Project",
-			project,
-			"total_purchase_cost",
-			(total_purchase_cost and total_purchase_cost[0][0] or 0),
-		)
+def update_costing_and_billing(project: str | None = None):
+	project = frappe.get_doc("Project", project)
+	project.update_costing()
+	project.db_update()

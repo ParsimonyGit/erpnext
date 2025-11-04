@@ -58,10 +58,10 @@ frappe.ui.form.on("Timesheet", {
 		}
 
 		if (frm.doc.docstatus < 1) {
-			let button = "Start Timer";
+			let button = __("Start Timer");
 			$.each(frm.doc.time_logs || [], function (i, row) {
 				if (row.from_time <= frappe.datetime.now_datetime() && !row.completed) {
-					button = "Resume Timer";
+					button = __("Resume Timer");
 				}
 			});
 
@@ -296,6 +296,7 @@ frappe.ui.form.on("Timesheet Detail", {
 
 	hours: function (frm, cdt, cdn) {
 		calculate_end_time(frm, cdt, cdn);
+		update_billing_hours(frm, cdt, cdn);
 		calculate_billing_costing_amount(frm, cdt, cdn);
 		calculate_time_and_amount(frm);
 	},

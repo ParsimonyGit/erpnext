@@ -7,6 +7,8 @@ from frappe import _
 from frappe.utils import flt
 
 from erpnext.accounts.report.financial_statements import (
+	compute_growth_view_data,
+	compute_margin_view_data,
 	get_columns,
 	get_data,
 	get_filtered_list_for_consolidated_report,
@@ -33,7 +35,6 @@ def execute(filters=None):
 		filters=filters,
 		accumulated_values=filters.accumulated_values,
 		ignore_closing_entries=True,
-		ignore_accumulated_values_for_fy=True,
 	)
 
 	expense = get_data(
@@ -44,7 +45,6 @@ def execute(filters=None):
 		filters=filters,
 		accumulated_values=filters.accumulated_values,
 		ignore_closing_entries=True,
-		ignore_accumulated_values_for_fy=True,
 	)
 
 	net_profit_loss = get_net_profit_loss(
@@ -67,6 +67,12 @@ def execute(filters=None):
 	report_summary, primitive_summary = get_report_summary(
 		period_list, filters.periodicity, income, expense, net_profit_loss, currency, filters
 	)
+
+	if filters.get("selected_view") == "Growth":
+		compute_growth_view_data(data, period_list)
+
+	if filters.get("selected_view") == "Margin":
+		compute_margin_view_data(data, period_list, filters.accumulated_values)
 
 	return columns, data, None, chart, report_summary, primitive_summary
 

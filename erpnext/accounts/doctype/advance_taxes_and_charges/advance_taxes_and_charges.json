@@ -16,6 +16,7 @@
   "accounting_dimensions_section",
   "cost_center",
   "dimension_col_break",
+  "project",
   "section_break_8",
   "rate",
   "section_break_9",
@@ -93,6 +94,13 @@
    "fieldtype": "Column Break"
   },
   {
+    "allow_on_submit": 1,
+    "fieldname": "project",
+    "fieldtype": "Link",
+    "label": "Project",
+    "options": "Project"
+  },
+  {
    "fieldname": "section_break_8",
    "fieldtype": "Section Break"
   },
@@ -101,7 +109,7 @@
    "fieldname": "rate",
    "fieldtype": "Float",
    "in_list_view": 1,
-   "label": "Rate",
+   "label": "Tax Rate",
    "oldfieldname": "rate",
    "oldfieldtype": "Currency"
   },

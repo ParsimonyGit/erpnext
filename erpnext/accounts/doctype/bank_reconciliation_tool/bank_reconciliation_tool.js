@@ -19,10 +19,15 @@ frappe.ui.form.on("Bank Reconciliation Tool", {
 	},
 
 	onload: function (frm) {
+		if (!frm.doc.company) {
+			frm.set_value("company", frappe.defaults.get_default("company"));
+		}
+
 		// Set default filter dates
 		let today = frappe.datetime.get_today();
 		frm.doc.bank_statement_from_date = frappe.datetime.add_months(today, -1);
 		frm.doc.bank_statement_to_date = today;
+
 		frm.trigger("bank_account");
 	},
 
@@ -98,7 +103,7 @@ frappe.ui.form.on("Bank Reconciliation Tool", {
 
 	make_reconciliation_tool(frm) {
 		frm.get_field("reconciliation_tool_cards").$wrapper.empty();
-		if (frm.doc.bank_account && frm.doc.bank_statement_to_date) {
+		if (frm.doc.company && frm.doc.bank_account && frm.doc.bank_statement_to_date) {
 			frm.trigger("get_cleared_balance").then(() => {
 				if (
 					frm.doc.bank_account &&
@@ -114,12 +119,13 @@ frappe.ui.form.on("Bank Reconciliation Tool", {
 	},
 
 	get_account_opening_balance(frm) {
-		if (frm.doc.bank_account && frm.doc.bank_statement_from_date) {
+		if (frm.doc.company && frm.doc.bank_account && frm.doc.bank_statement_from_date) {
 			frappe.call({
 				method: "erpnext.accounts.doctype.bank_reconciliation_tool.bank_reconciliation_tool.get_account_balance",
 				args: {
 					bank_account: frm.doc.bank_account,
 					till_date: frappe.datetime.add_days(frm.doc.bank_statement_from_date, -1),
+					company: frm.doc.company,
 				},
 				callback: (response) => {
 					frm.set_value("account_opening_balance", response.message);
@@ -129,12 +135,13 @@ frappe.ui.form.on("Bank Reconciliation Tool", {
 	},
 
 	get_cleared_balance(frm) {
-		if (frm.doc.bank_account && frm.doc.bank_statement_to_date) {
+		if (frm.doc.company && frm.doc.bank_account && frm.doc.bank_statement_to_date) {
 			return frappe.call({
 				method: "erpnext.accounts.doctype.bank_reconciliation_tool.bank_reconciliation_tool.get_account_balance",
 				args: {
 					bank_account: frm.doc.bank_account,
 					till_date: frm.doc.bank_statement_to_date,
+					company: frm.doc.company,
 				},
 				callback: (response) => {
 					frm.cleared_balance = response.message;

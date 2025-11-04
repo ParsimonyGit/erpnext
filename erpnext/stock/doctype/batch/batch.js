@@ -22,6 +22,17 @@ frappe.ui.form.on("Batch", {
 				frappe.set_route("query-report", "Stock Ledger");
 			});
 			frm.trigger("make_dashboard");
+
+			frm.add_custom_button(__("Recalculate Batch Qty"), () => {
+				frm.call({
+					method: "recalculate_batch_qty",
+					doc: frm.doc,
+					freeze: true,
+					callback: () => {
+						frm.reload_doc();
+					},
+				});
+			});
 		}
 	},
 	item: (frm) => {
@@ -54,7 +65,12 @@ frappe.ui.form.on("Batch", {
 
 			frappe.call({
 				method: "erpnext.stock.doctype.batch.batch.get_batch_qty",
-				args: { batch_no: frm.doc.name, item_code: frm.doc.item, for_stock_levels: for_stock_levels },
+				args: {
+					batch_no: frm.doc.name,
+					item_code: frm.doc.item,
+					for_stock_levels: for_stock_levels,
+					consider_negative_batches: 1,
+				},
 				callback: (r) => {
 					if (!r.message) {
 						return;
@@ -71,7 +87,7 @@ frappe.ui.form.on("Batch", {
 
 					// show
 					(r.message || []).forEach(function (d) {
-						if (d.qty > 0) {
+						if (d.qty != 0) {
 							$(`<div class='row' style='margin-bottom: 10px;'>
 								<div class='col-sm-3 small' style='padding-top: 3px;'>${d.warehouse}</div>
 								<div class='col-sm-3 small text-right' style='padding-top: 3px;'>${d.qty}</div>

@@ -4,7 +4,7 @@ app_publisher = "Frappe Technologies Pvt. Ltd."
 app_description = """ERP made simple"""
 app_icon = "fa fa-th"
 app_color = "#e74c3c"
-app_email = "info@erpnext.com"
+app_email = "hello@frappe.io"
 app_license = "GNU General Public License (v3)"
 source_link = "https://github.com/frappe/erpnext"
 app_logo_url = "/assets/erpnext/images/erpnext-logo.svg"
@@ -35,6 +35,14 @@ doctype_js = {
 	"Newsletter": "public/js/newsletter.js",
 	"Contact": "public/js/contact.js",
 }
+doctype_list_js = {
+	"Code List": [
+		"edi/doctype/code_list/code_list_import.js",
+	],
+	"Common Code": [
+		"edi/doctype/code_list/code_list_import.js",
+	],
+}
 
 override_doctype_class = {"Address": "erpnext.accounts.custom.address.ERPNextAddress"}
 
@@ -49,7 +57,6 @@ setup_wizard_complete = "erpnext.setup.setup_wizard.setup_wizard.setup_demo"
 setup_wizard_test = "erpnext.setup.setup_wizard.test_setup_wizard.run_setup_wizard_test"
 
 before_install = [
-	"erpnext.setup.install.check_setup_wizard_not_completed",
 	"erpnext.setup.install.check_frappe_version",
 ]
 after_install = "erpnext.setup.install.after_install"
@@ -343,7 +350,10 @@ doc_events = {
 			"erpnext.support.doctype.service_level_agreement.service_level_agreement.on_communication_update",
 			"erpnext.support.doctype.issue.issue.set_first_response_time",
 		],
-		"after_insert": "erpnext.crm.utils.link_communications_with_prospect",
+		"after_insert": [
+			"erpnext.crm.utils.link_communications_with_prospect",
+			"erpnext.crm.utils.update_modified_timestamp",
+		],
 	},
 	"Event": {
 		"after_insert": "erpnext.crm.utils.link_events_with_prospect",
@@ -353,7 +363,9 @@ doc_events = {
 			"erpnext.regional.create_transaction_log",
 			"erpnext.regional.italy.utils.sales_invoice_on_submit",
 		],
-		"on_cancel": ["erpnext.regional.italy.utils.sales_invoice_on_cancel"],
+		"on_cancel": [
+			"erpnext.regional.italy.utils.sales_invoice_on_cancel",
+		],
 		"on_trash": "erpnext.regional.check_deletion_permission",
 	},
 	"Purchase Invoice": {
@@ -365,10 +377,7 @@ doc_events = {
 	"Payment Entry": {
 		"on_submit": [
 			"erpnext.regional.create_transaction_log",
-			"erpnext.accounts.doctype.payment_request.payment_request.update_payment_req_status",
-			"erpnext.accounts.doctype.dunning.dunning.resolve_dunning",
 		],
-		"on_cancel": ["erpnext.accounts.doctype.dunning.dunning.resolve_dunning"],
 		"on_trash": "erpnext.regional.check_deletion_permission",
 	},
 	"Address": {
@@ -405,7 +414,6 @@ scheduler_events = {
 	"cron": {
 		"0/15 * * * *": [
 			"erpnext.manufacturing.doctype.bom_update_log.bom_update_log.resume_bom_cost_update_jobs",
-			"erpnext.accounts.doctype.process_payment_reconciliation.process_payment_reconciliation.trigger_reconciliation_for_queued_docs",
 		],
 		"0/30 * * * *": [
 			"erpnext.utilities.doctype.video.video.update_youtube_data",
@@ -475,7 +483,7 @@ email_brand_image = "assets/erpnext/images/erpnext-logo.jpg"
 default_mail_footer = """
 	<span>
 		Sent via
-		<a class="text-muted" href="https://erpnext.com?source=via_email_footer" target="_blank">
+		<a class="text-muted" href="https://frappe.io/erpnext?source=via_email_footer" target="_blank">
 			ERPNext
 		</a>
 	</span>
@@ -553,6 +561,8 @@ accounting_dimension_doctypes = [
 	"Payment Reconciliation",
 	"Payment Reconciliation Allocation",
 	"Payment Request",
+	"Asset Movement Item",
+	"Asset Depreciation Schedule",
 ]
 
 get_matching_queries = (

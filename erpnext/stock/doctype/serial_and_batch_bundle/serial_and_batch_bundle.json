@@ -1,6 +1,6 @@
 {
  "actions": [],
- "autoname": "naming_series:",
+ "autoname": "hash",
  "creation": "2023-08-11 17:22:12.907518",
  "doctype": "DocType",
  "editable_grid": 1,
@@ -108,7 +108,8 @@
    "in_list_view": 1,
    "label": "Voucher Type",
    "options": "DocType",
-   "reqd": 1
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "voucher_no",
@@ -152,6 +153,7 @@
    "fieldtype": "Column Break"
   },
   {
+   "allow_on_submit": 1,
    "fieldname": "avg_rate",
    "fieldtype": "Float",
    "label": "Avg Rate",
@@ -159,6 +161,7 @@
    "read_only": 1
   },
   {
+   "allow_on_submit": 1,
    "fieldname": "total_amount",
    "fieldtype": "Float",
    "label": "Total Amount",
@@ -166,6 +169,7 @@
    "read_only": 1
   },
   {
+   "allow_on_submit": 1,
    "fieldname": "total_qty",
    "fieldtype": "Float",
    "label": "Total Qty",
@@ -192,14 +196,7 @@
    "fieldtype": "Select",
    "label": "Type of Transaction",
    "options": "\nInward\nOutward\nMaintenance\nAsset Repair",
-   "reqd": 1,
-   "search_index": 1
-  },
-  {
-   "fieldname": "naming_series",
-   "fieldtype": "Select",
-   "label": "Naming Series",
-   "options": "SABB-.########"
+   "reqd": 1
   },
   {
    "default": "0",
@@ -246,16 +243,24 @@
    "fieldtype": "Data",
    "label": "Returned Against",
    "read_only": 1
+  },
+  {
+   "default": "SABB-.########",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Naming Series",
+   "options": "\nSABB-.########",
+   "set_only_once": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2024-03-15 15:22:24.003486",
+ "modified": "2025-09-15 14:37:26.441742",
  "modified_by": "Administrator",
  "module": "Stock",
  "name": "Serial and Batch Bundle",
- "naming_rule": "By \"Naming Series\" field",
+ "naming_rule": "Random",
  "owner": "Administrator",
  "permissions": [
   {

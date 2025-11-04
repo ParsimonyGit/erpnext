@@ -8,8 +8,9 @@ import frappe
 from frappe.utils import cint
 from frappe.utils.nestedset import get_root_of
 
-from erpnext.accounts.doctype.pos_invoice.pos_invoice import get_stock_availability
+from erpnext.accounts.doctype.pos_invoice.pos_invoice import get_item_group, get_stock_availability
 from erpnext.accounts.doctype.pos_profile.pos_profile import get_child_nodes, get_item_groups
+from erpnext.stock.get_item_details import get_conversion_factor
 from erpnext.stock.utils import scan_barcode
 
 
@@ -35,6 +36,7 @@ def search_by_term(search_term, warehouse, price_list):
 		"description": item_doc.description,
 		"is_stock_item": item_doc.is_stock_item,
 		"item_code": item_doc.name,
+		"item_group": item_doc.item_group,
 		"item_image": item_doc.image,
 		"item_name": item_doc.item_name,
 		"serial_no": serial_no,
@@ -57,27 +59,44 @@ def search_by_term(search_term, warehouse, price_list):
 	item_stock_qty = item_stock_qty // item.get("conversion_factor", 1)
 	item.update({"actual_qty": item_stock_qty})
 
+	price_filters = {
+		"price_list": price_list,
+		"item_code": item_code,
+	}
+
+	if batch_no:
+		price_filters["batch_no"] = ["in", [batch_no, ""]]
+
+	if serial_no:
+		price_filters["uom"] = item_doc.stock_uom
+
 	price = frappe.get_list(
 		doctype="Item Price",
-		filters={
-			"price_list": price_list,
-			"item_code": item_code,
-			"batch_no": batch_no,
-		},
+		filters=price_filters,
 		fields=["uom", "currency", "price_list_rate", "batch_no"],
 	)
 
 	def __sort(p):
 		p_uom = p.get("uom")
+		p_batch = p.get("batch_no")
+		batch_no = item.get("batch_no")
+
+		if batch_no and p_batch and p_batch == batch_no:
+			if p_uom == item.get("uom"):
+				return 0
+			elif p_uom == item.get("stock_uom"):
+				return 1
+			else:
+				return 2
 
 		if p_uom == item.get("uom"):
-			return 0
+			return 3
 		elif p_uom == item.get("stock_uom"):
-			return 1
+			return 4
 		else:
-			return 2
+			return 5
 
-	# sort by fallback preference. always pick exact uom match if available
+	# sort by fallback preference. always pick exact uom and batch number match if available
 	price = sorted(price, key=__sort)
 
 	if len(price) > 0:
@@ -92,6 +111,23 @@ def search_by_term(search_term, warehouse, price_list):
 	return {"items": [item]}
 
 
+def filter_result_items(result, pos_profile):
+	if result and result.get("items"):
+		pos_profile_doc = frappe.get_cached_doc("POS Profile", pos_profile)
+		pos_item_groups = get_item_group(pos_profile_doc)
+		if not pos_item_groups:
+			return
+		result["items"] = [item for item in result.get("items") if item.get("item_group") in pos_item_groups]
+
+
+@frappe.whitelist()
+def get_parent_item_group():
+	# Using get_all to ignore user permission
+	item_group = frappe.get_all("Item Group", {"lft": 1, "is_group": 1}, pluck="name")
+	if item_group:
+		return item_group[0]
+
+
 @frappe.whitelist()
 def get_items(start, page_length, price_list, item_group, pos_profile, search_term=""):
 	warehouse, hide_unavailable_items = frappe.db.get_value(
@@ -102,6 +138,7 @@ def get_items(start, page_length, price_list, item_group, pos_profile, search_te
 
 	if search_term:
 		result = search_by_term(search_term, warehouse, price_list) or []
+		filter_result_items(result, pos_profile)
 		if result:
 			return result
 
@@ -115,10 +152,8 @@ def get_items(start, page_length, price_list, item_group, pos_profile, search_te
 
 	bin_join_selection, bin_join_condition = "", ""
 	if hide_unavailable_items:
-		bin_join_selection = ", `tabBin` bin"
-		bin_join_condition = (
-			"AND bin.warehouse = %(warehouse)s AND bin.item_code = item.name AND bin.actual_qty > 0"
-		)
+		bin_join_selection = "LEFT JOIN `tabBin` bin ON bin.item_code = item.name"
+		bin_join_condition = "AND (item.is_stock_item = 0 OR (item.is_stock_item = 1 AND bin.warehouse = %(warehouse)s AND bin.actual_qty > 0))"
 
 	items_data = frappe.db.sql(
 		"""
@@ -128,7 +163,8 @@ def get_items(start, page_length, price_list, item_group, pos_profile, search_te
 			item.description,
 			item.stock_uom,
 			item.image AS item_image,
-			item.is_stock_item
+			item.is_stock_item,
+			item.sales_uom
 		FROM
 			`tabItem` item {bin_join_selection}
 		WHERE
@@ -159,40 +195,56 @@ def get_items(start, page_length, price_list, item_group, pos_profile, search_te
 	if not items_data:
 		return result
 
+	current_date = frappe.utils.today()
+
 	for item in items_data:
-		uoms = frappe.get_doc("Item", item.item_code).get("uoms", [])
-
 		item.actual_qty, _ = get_stock_availability(item.item_code, warehouse)
-		item.uom = item.stock_uom
 
-		item_price = frappe.get_all(
+		item_prices = frappe.get_all(
 			"Item Price",
-			fields=["price_list_rate", "currency", "uom", "batch_no"],
+			fields=["price_list_rate", "currency", "uom", "batch_no", "valid_from", "valid_upto"],
 			filters={
 				"price_list": price_list,
 				"item_code": item.item_code,
 				"selling": True,
+				"valid_from": ["<=", current_date],
+				"valid_upto": ["in", [None, "", current_date]],
 			},
+			order_by="valid_from desc",
 		)
 
-		if not item_price:
-			result.append(item)
+		stock_uom_price = next((d for d in item_prices if d.get("uom") == item.stock_uom), {})
+		item_uom = item.stock_uom
+		item_uom_price = stock_uom_price
 
-		for price in item_price:
-			uom = next(filter(lambda x: x.uom == price.uom, uoms), {})
+		if item.sales_uom and item.sales_uom != item.stock_uom:
+			item_uom = item.sales_uom
+			sales_uom_price = next((d for d in item_prices if d.get("uom") == item.sales_uom), {})
+			if sales_uom_price:
+				item_uom_price = sales_uom_price
 
-			if price.uom != item.stock_uom and uom and uom.conversion_factor:
-				item.actual_qty = item.actual_qty // uom.conversion_factor
+		if item_prices and not item_uom_price:
+			item_uom = item_prices[0].get("uom")
+			item_uom_price = item_prices[0]
 
-			result.append(
-				{
-					**item,
-					"price_list_rate": price.get("price_list_rate"),
-					"currency": price.get("currency"),
-					"uom": price.uom or item.uom,
-					"batch_no": price.batch_no,
-				}
-			)
+		item_conversion_factor = get_conversion_factor(item.item_code, item_uom).get("conversion_factor")
+
+		if item.stock_uom != item_uom:
+			item.actual_qty = item.actual_qty // item_conversion_factor
+
+		if item_uom_price and item_uom != item_uom_price.get("uom"):
+			item_uom_price.price_list_rate = item_uom_price.price_list_rate * item_conversion_factor
+
+		result.append(
+			{
+				**item,
+				"price_list_rate": item_uom_price.get("price_list_rate"),
+				"currency": item_uom_price.get("currency"),
+				"uom": item_uom,
+				"batch_no": item_uom_price.get("batch_no"),
+			}
+		)
+
 	return {"items": result}
 
 
@@ -286,17 +338,21 @@ def create_opening_voucher(pos_profile, company, balance_details):
 
 @frappe.whitelist()
 def get_past_order_list(search_term, status, limit=20):
-	fields = ["name", "grand_total", "currency", "customer", "posting_time", "posting_date"]
+	fields = ["name", "grand_total", "currency", "customer", "customer_name", "posting_time", "posting_date"]
 	invoice_list = []
 
 	if search_term and status:
-		invoices_by_customer = frappe.db.get_all(
+		invoices_by_customer = frappe.db.get_list(
 			"POS Invoice",
-			filters={"customer": ["like", f"%{search_term}%"], "status": status},
+			filters={"status": status},
+			or_filters={
+				"customer_name": ["like", f"%{search_term}%"],
+				"customer": ["like", f"%{search_term}%"],
+			},
 			fields=fields,
 			page_length=limit,
 		)
-		invoices_by_name = frappe.db.get_all(
+		invoices_by_name = frappe.db.get_list(
 			"POS Invoice",
 			filters={"name": ["like", f"%{search_term}%"], "status": status},
 			fields=fields,
@@ -305,7 +361,7 @@ def get_past_order_list(search_term, status, limit=20):
 
 		invoice_list = invoices_by_customer + invoices_by_name
 	elif status:
-		invoice_list = frappe.db.get_all(
+		invoice_list = frappe.db.get_list(
 			"POS Invoice", filters={"status": status}, fields=fields, page_length=limit
 		)
 

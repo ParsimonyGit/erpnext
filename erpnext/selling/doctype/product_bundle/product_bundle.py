@@ -5,6 +5,7 @@
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.query_builder import Criterion
 from frappe.utils import get_link_to_form
 
 
@@ -31,6 +32,7 @@ class ProductBundle(Document):
 	def validate(self):
 		self.validate_main_item()
 		self.validate_child_items()
+		self.validate_child_items_qty_non_zero()
 		from erpnext.utilities.transaction_base import validate_uom_is_integer
 
 		validate_uom_is_integer(self, "uom", "qty")
@@ -87,20 +89,38 @@ class ProductBundle(Document):
 					).format(item.idx, frappe.bold(item.item_code))
 				)
 
+	def validate_child_items_qty_non_zero(self):
+		for item in self.items:
+			if item.qty <= 0:
+				frappe.throw(
+					_(
+						"Row #{0}: Quantity cannot be a non-positive number. Please increase the quantity or remove the Item {1}"
+					).format(item.idx, frappe.bold(item.item_code))
+				)
+
 
 @frappe.whitelist()
 @frappe.validate_and_sanitize_search_inputs
 def get_new_item_code(doctype, txt, searchfield, start, page_len, filters):
 	product_bundles = frappe.db.get_list("Product Bundle", {"disabled": 0}, pluck="name")
 
+	if not searchfield or searchfield == "name":
+		searchfield = frappe.get_meta("Item").get("search_fields")
+
+	searchfield = searchfield.split(",")
+	searchfield.append("name")
+
 	item = frappe.qb.DocType("Item")
 	query = (
 		frappe.qb.from_(item)
-		.select(item.item_code, item.item_name)
-		.where((item.is_stock_item == 0) & (item.is_fixed_asset == 0) & (item[searchfield].like(f"%{txt}%")))
+		.select(item.name, item.item_name)
+		.where((item.is_stock_item == 0) & (item.is_fixed_asset == 0))
 		.limit(page_len)
 		.offset(start)
 	)
+
+	if searchfield:
+		query = query.where(Criterion.any([item[fieldname].like(f"%{txt}%") for fieldname in searchfield]))
 
 	if product_bundles:
 		query = query.where(item.name.notin(product_bundles))

@@ -12,6 +12,8 @@ from frappe.utils import cint, flt, get_link_to_form
 
 from erpnext.controllers.stock_controller import StockController
 from erpnext.stock.doctype.serial_and_batch_bundle.serial_and_batch_bundle import (
+	get_auto_batch_nos,
+	get_available_serial_nos,
 	get_voucher_wise_serial_batch_from_bundle,
 )
 from erpnext.stock.doctype.serial_no.serial_no import get_serial_nos
@@ -52,8 +54,41 @@ class SubcontractingController(StockController):
 		if self.doctype in ["Subcontracting Order", "Subcontracting Receipt"]:
 			self.validate_items()
 			self.create_raw_materials_supplied()
+			self.set_valuation_rate_for_rm()
 		else:
 			super().validate()
+
+	def set_valuation_rate_for_rm(self):
+		rate_changed = False
+		if self.doctype == "Subcontracting Receipt":
+			for row in self.supplied_items:
+				kwargs = frappe._dict(
+					{
+						"item_code": row.rm_item_code,
+						"warehouse": self.supplier_warehouse,
+						"posting_date": self.posting_date,
+						"posting_time": self.posting_time,
+						"qty": flt(row.consumed_qty) * (-1 if not self.is_return else 1),
+						"voucher_type": self.doctype,
+						"voucher_no": self.name,
+						"company": self.company,
+						"serial_and_batch_bundle": row.serial_and_batch_bundle,
+						"voucher_detail_no": row.name,
+						"batch_no": row.batch_no,
+						"serial_no": row.serial_no,
+						"use_serial_batch_fields": row.use_serial_batch_fields,
+					}
+				)
+
+				rate = get_incoming_rate(kwargs)
+				precision = frappe.get_precision("Subcontracting Receipt Supplied Item", "rate")
+				if flt(rate, precision) != flt(row.rate, precision):
+					row.rate = rate
+					row.amount = flt(row.consumed_qty) * flt(rate)
+					rate_changed = True
+
+		if rate_changed:
+			self.calculate_items_qty_and_amount()
 
 	def validate_rejected_warehouse(self):
 		for item in self.get("items"):
@@ -103,6 +138,28 @@ class SubcontractingController(StockController):
 						_("Row {0}: Item {1} must be a subcontracted item.").format(item.idx, item.item_name)
 					)
 
+				if (
+					self.doctype == "Subcontracting Order" and not item.subcontracting_conversion_factor
+				):  # this condition will only be true if user has recently updated from develop branch
+					service_item_qty = frappe.get_value(
+						"Subcontracting Order Service Item",
+						filters={"purchase_order_item": item.purchase_order_item, "parent": self.name},
+						fieldname=["qty"],
+					)
+					item.subcontracting_conversion_factor = service_item_qty / item.qty
+
+				if self.doctype not in "Subcontracting Receipt" and item.qty > flt(
+					get_pending_subcontracted_quantity(self.purchase_order).get(item.purchase_order_item)
+					/ item.subcontracting_conversion_factor,
+					frappe.get_precision("Purchase Order Item", "qty"),
+				):
+					frappe.throw(
+						_(
+							"Row {0}: Item {1}'s quantity cannot be higher than the available quantity."
+						).format(item.idx, item.item_name)
+					)
+				item.amount = item.qty * item.rate
+
 				if item.bom:
 					is_active, bom_item = frappe.get_value("BOM", item.bom, ["is_active", "item"])
 
@@ -142,6 +199,9 @@ class SubcontractingController(StockController):
 
 		if self.doctype in ["Purchase Order", "Subcontracting Order"] or self.is_new():
 			self.set(self.raw_material_table, [])
+			return
+
+		if not self.get(self.raw_material_table):
 			return
 
 		item_dict = self.__get_data_before_save()
@@ -442,7 +502,7 @@ class SubcontractingController(StockController):
 			i += 1
 
 	def __remove_serial_and_batch_bundle(self, item):
-		if item.serial_and_batch_bundle:
+		if item.get("serial_and_batch_bundle"):
 			frappe.delete_doc("Serial and Batch Bundle", item.serial_and_batch_bundle, force=True)
 
 	def __get_materials_from_bom(self, item_code, bom_no, exploded_item=0):
@@ -523,7 +583,11 @@ class SubcontractingController(StockController):
 	def __get_batch_nos_for_bundle(self, qty, key):
 		available_batches = defaultdict(float)
 
+		precision = frappe.get_precision("Subcontracting Receipt Supplied Item", "consumed_qty")
 		for batch_no, batch_qty in self.available_materials[key]["batch_no"].items():
+			if flt(batch_qty, precision) <= 0:
+				continue
+
 			qty_to_consumed = 0
 			if qty > 0:
 				if batch_qty >= qty:
@@ -561,11 +625,11 @@ class SubcontractingController(StockController):
 		use_serial_batch_fields = frappe.db.get_single_value("Stock Settings", "use_serial_batch_fields")
 
 		if self.doctype == self.subcontract_data.order_doctype:
-			rm_obj.required_qty = qty
-			rm_obj.amount = rm_obj.required_qty * rm_obj.rate
+			rm_obj.required_qty = flt(qty, rm_obj.precision("required_qty"))
+			rm_obj.amount = flt(rm_obj.required_qty * rm_obj.rate, rm_obj.precision("amount"))
 		else:
-			rm_obj.consumed_qty = qty
-			rm_obj.required_qty = bom_item.required_qty or qty
+			rm_obj.consumed_qty = flt(qty, rm_obj.precision("consumed_qty"))
+			rm_obj.required_qty = flt(bom_item.required_qty or qty, rm_obj.precision("required_qty"))
 			rm_obj.serial_and_batch_bundle = None
 			setattr(
 				rm_obj, self.subcontract_data.order_field, item_row.get(self.subcontract_data.order_field)
@@ -573,33 +637,124 @@ class SubcontractingController(StockController):
 
 			if use_serial_batch_fields:
 				rm_obj.use_serial_batch_fields = 1
-				self.__set_batch_nos(bom_item, item_row, rm_obj, qty)
+				if not self.flags.get("reset_raw_materials"):
+					self.__set_batch_nos(bom_item, item_row, rm_obj, qty)
 
-		if self.doctype == "Subcontracting Receipt" and not use_serial_batch_fields:
-			args = frappe._dict(
+		if self.doctype == "Subcontracting Receipt":
+			if not use_serial_batch_fields:
+				rm_obj.serial_and_batch_bundle = self.__set_serial_and_batch_bundle(
+					item_row, rm_obj, rm_obj.consumed_qty
+				)
+
+				self.set_rate_for_supplied_items(rm_obj, item_row)
+			elif self.backflush_based_on == "BOM":
+				self.update_rate_for_supplied_items()
+				self.set_batch_for_supplied_items()
+
+	def set_batch_for_supplied_items(self):
+		from erpnext.stock.doctype.serial_no.serial_no import get_serial_nos_for_outward
+		from erpnext.stock.get_item_details import get_filtered_serial_nos
+
+		if self.is_return:
+			return
+
+		for row in self.supplied_items:
+			item_details = frappe.get_cached_value(
+				"Item", row.rm_item_code, ["has_batch_no", "has_serial_no"], as_dict=1
+			)
+
+			if not item_details.has_batch_no and not item_details.has_serial_no:
+				continue
+
+			if not row.use_serial_batch_fields:
+				continue
+
+			kwargs = frappe._dict(
 				{
-					"item_code": rm_obj.rm_item_code,
+					"item_code": row.rm_item_code,
 					"warehouse": self.supplier_warehouse,
 					"posting_date": self.posting_date,
 					"posting_time": self.posting_time,
-					"qty": -1 * flt(rm_obj.consumed_qty),
-					"actual_qty": -1 * flt(rm_obj.consumed_qty),
-					"voucher_type": self.doctype,
-					"voucher_no": self.name,
-					"voucher_detail_no": item_row.name,
-					"company": self.company,
-					"allow_zero_valuation": 1,
+					"qty": flt(row.consumed_qty),
 				}
 			)
 
-			rm_obj.serial_and_batch_bundle = self.__set_serial_and_batch_bundle(
-				item_row, rm_obj, rm_obj.consumed_qty
-			)
+			if item_details.has_serial_no and not row.serial_and_batch_bundle and not row.serial_no:
+				serial_nos = get_available_serial_nos(kwargs)
+				if serial_nos:
+					serial_nos = [sn.get("serial_no") for sn in serial_nos]
+					serial_nos = get_filtered_serial_nos(serial_nos, self, "supplied_items")
+					row.serial_no = "\n".join(serial_nos)
 
-			if rm_obj.serial_and_batch_bundle:
-				args["serial_and_batch_bundle"] = rm_obj.serial_and_batch_bundle
+			elif item_details.has_batch_no and not row.serial_and_batch_bundle and not row.batch_no:
+				batches = get_auto_batch_nos(kwargs)
+				if batches:
+					consumed_qty = row.consumed_qty
+					for index, d in enumerate(batches):
+						if consumed_qty <= 0:
+							break
 
-			rm_obj.rate = get_incoming_rate(args)
+						if index == 0:
+							row.batch_no = d.get("batch_no")
+							row.consumed_qty = d.get("qty")
+							consumed_qty -= d.get("qty")
+						else:
+							new_row = self.append("supplied_items", {})
+							new_row.update(frappe.copy_doc(row).as_dict())
+							new_row.update(
+								{
+									"consumed_qty": d.get("qty"),
+									"batch_no": d.get("batch_no"),
+									"rate": row.rate,
+									"amount": flt(d.get("qty")) * flt(row.rate),
+								}
+							)
+							consumed_qty -= d.get("qty")
+
+	def update_rate_for_supplied_items(self):
+		if self.doctype != "Subcontracting Receipt":
+			return
+
+		for row in self.supplied_items:
+			item_row = None
+			if row.reference_name:
+				item_row = self.get_item_row(row.reference_name)
+
+			if not item_row:
+				continue
+
+			self.set_rate_for_supplied_items(row, item_row)
+
+	def get_item_row(self, reference_name):
+		for item in self.items:
+			if item.name == reference_name:
+				return item
+
+	def set_rate_for_supplied_items(self, rm_obj, item_row):
+		args = frappe._dict(
+			{
+				"item_code": rm_obj.rm_item_code,
+				"warehouse": self.supplier_warehouse,
+				"posting_date": self.posting_date,
+				"posting_time": self.posting_time,
+				"qty": -1 * flt(rm_obj.consumed_qty),
+				"actual_qty": -1 * flt(rm_obj.consumed_qty),
+				"voucher_type": self.doctype,
+				"voucher_no": self.name,
+				"voucher_detail_no": item_row.name,
+				"company": self.company,
+				"allow_zero_valuation": 1,
+			}
+		)
+
+		if rm_obj.serial_and_batch_bundle:
+			args["serial_and_batch_bundle"] = rm_obj.serial_and_batch_bundle
+
+		if rm_obj.use_serial_batch_fields:
+			args["batch_no"] = rm_obj.batch_no
+			args["serial_no"] = rm_obj.serial_no
+
+		rm_obj.rate = get_incoming_rate(args)
 
 	def __set_batch_nos(self, bom_item, item_row, rm_obj, qty):
 		key = (rm_obj.rm_item_code, item_row.item_code, item_row.get(self.subcontract_data.order_field))
@@ -638,8 +793,8 @@ class SubcontractingController(StockController):
 			self.__set_serial_nos(item_row, rm_obj)
 
 	def __set_consumed_qty(self, rm_obj, consumed_qty, required_qty=0):
-		rm_obj.required_qty = required_qty
-		rm_obj.consumed_qty = consumed_qty
+		rm_obj.required_qty = flt(required_qty, rm_obj.precision("required_qty"))
+		rm_obj.consumed_qty = flt(consumed_qty, rm_obj.precision("consumed_qty"))
 
 	def __set_serial_nos(self, item_row, rm_obj):
 		key = (rm_obj.rm_item_code, item_row.item_code, item_row.get(self.subcontract_data.order_field))
@@ -691,7 +846,9 @@ class SubcontractingController(StockController):
 			):
 				continue
 
-			if self.doctype == self.subcontract_data.order_doctype or self.backflush_based_on == "BOM":
+			if self.doctype == self.subcontract_data.order_doctype or (
+				self.backflush_based_on == "BOM" or self.is_return
+			):
 				for bom_item in self.__get_materials_from_bom(
 					row.item_code, row.bom, row.get("include_exploded_items")
 				):
@@ -896,7 +1053,7 @@ class SubcontractingController(StockController):
 					)
 
 				sco_doc.update_ordered_qty_for_subcontracting(sco_item_rows)
-				sco_doc.update_reserved_qty_for_subcontracting()
+				sco_doc.update_reserved_qty_for_subcontracting(sco_item_rows)
 
 	def make_sl_entries_for_supplier_warehouse(self, sl_entries):
 		if hasattr(self, "supplied_items"):
@@ -989,7 +1146,7 @@ class SubcontractingController(StockController):
 
 		return supplied_items_cost
 
-	def set_subcontracting_order_status(self):
+	def set_subcontracting_order_status(self, update_bin=True):
 		if self.doctype == "Subcontracting Order":
 			self.update_status()
 		elif self.doctype == "Subcontracting Receipt":
@@ -998,7 +1155,7 @@ class SubcontractingController(StockController):
 			if self.subcontract_orders:
 				for sco in set(self.subcontract_orders):
 					sco_doc = frappe.get_doc("Subcontracting Order", sco)
-					sco_doc.update_status()
+					sco_doc.update_status(update_bin=update_bin)
 
 	def calculate_additional_costs(self):
 		self.total_additional_costs = sum(flt(item.amount) for item in self.get("additional_costs"))
@@ -1082,6 +1239,16 @@ def get_item_details(items):
 		item_details[item.item_code] = item
 
 	return item_details
+
+
+def get_pending_subcontracted_quantity(po_name):
+	table = frappe.qb.DocType("Purchase Order Item")
+	query = (
+		frappe.qb.from_(table)
+		.select(table.name, table.qty, table.subcontracted_quantity)
+		.where(table.parent == po_name)
+	)
+	return {item.name: item.qty - item.subcontracted_quantity for item in query.run(as_dict=True)}
 
 
 @frappe.whitelist()
@@ -1202,6 +1369,7 @@ def add_items_in_ste(ste_doc, row, qty, rm_details, rm_detail_field="sco_rm_deta
 			"item_code": row.item_details["rm_item_code"],
 			"subcontracted_item": row.item_details["main_item_code"],
 			"serial_no": "\n".join(row.serial_no) if row.serial_no else "",
+			"use_serial_batch_fields": 1,
 		}
 	)
 
@@ -1209,6 +1377,17 @@ def add_items_in_ste(ste_doc, row, qty, rm_details, rm_detail_field="sco_rm_deta
 def make_return_stock_entry_for_subcontract(
 	available_materials, order_doc, rm_details, order_doctype="Subcontracting Order"
 ):
+	def post_process(source_doc, target_doc):
+		target_doc.purpose = "Material Transfer"
+
+		if source_doc.doctype == "Purchase Order":
+			target_doc.purchase_order = source_doc.name
+		else:
+			target_doc.subcontracting_order = source_doc.name
+
+		target_doc.company = source_doc.company
+		target_doc.is_return = 1
+
 	ste_doc = get_mapped_doc(
 		order_doctype,
 		order_doc.name,
@@ -1219,27 +1398,25 @@ def make_return_stock_entry_for_subcontract(
 			},
 		},
 		ignore_child_tables=True,
+		postprocess=post_process,
 	)
 
-	ste_doc.purpose = "Material Transfer"
-
 	if order_doctype == "Purchase Order":
-		ste_doc.purchase_order = order_doc.name
 		rm_detail_field = "po_detail"
 	else:
-		ste_doc.subcontracting_order = order_doc.name
 		rm_detail_field = "sco_rm_detail"
-	ste_doc.company = order_doc.company
-	ste_doc.is_return = 1
 
 	for _key, value in available_materials.items():
 		if not value.qty:
 			continue
 
+		if item_details := value.get("item_details"):
+			item_details["serial_and_batch_bundle"] = None
+
 		if value.batch_no:
 			for batch_no, qty in value.batch_no.items():
 				if qty > 0:
-					add_items_in_ste(ste_doc, value, value.qty, rm_details, rm_detail_field, batch_no)
+					add_items_in_ste(ste_doc, value, qty, rm_details, rm_detail_field, batch_no)
 		else:
 			add_items_in_ste(ste_doc, value, value.qty, rm_details, rm_detail_field)
 

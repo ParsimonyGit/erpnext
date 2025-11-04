@@ -28,6 +28,8 @@ BOM_ITEM_FIELDS = [
 	"stock_uom",
 	"conversion_factor",
 	"do_not_explode",
+	"source_warehouse",
+	"allow_alternative_item",
 ]
 
 
@@ -204,7 +206,7 @@ class BOMCreator(Document):
 
 		for field, label in fields.items():
 			if not self.get(field):
-				frappe.throw(_("Please set {0} in BOM Creator {1}").format(label, self.name))
+				frappe.throw(_("Please set {0} in BOM Creator {1}").format(_(label), self.name))
 
 	def on_submit(self):
 		self.enqueue_create_boms()
@@ -251,6 +253,13 @@ class BOMCreator(Document):
 			if not row.fg_reference_id and production_item_wise_rm.get((row.fg_item, row.fg_reference_id)):
 				frappe.throw(_("Please set Parent Row No for item {0}").format(row.fg_item))
 
+			key = (row.fg_item, row.fg_reference_id)
+			if key not in production_item_wise_rm:
+				production_item_wise_rm.setdefault(
+					key,
+					frappe._dict({"items": [], "bom_no": "", "fg_item_data": row}),
+				)
+
 			production_item_wise_rm[(row.fg_item, row.fg_reference_id)]["items"].append(row)
 
 		reverse_tree = OrderedDict(reversed(list(production_item_wise_rm.items())))
@@ -291,7 +300,6 @@ class BOMCreator(Document):
 				"item": row.item_code,
 				"bom_type": "Production",
 				"quantity": row.qty,
-				"allow_alternative_item": 1,
 				"bom_creator": self.name,
 				"bom_creator_item": bom_creator_item,
 			}
@@ -315,7 +323,6 @@ class BOMCreator(Document):
 			item_args.update(
 				{
 					"bom_no": bom_no,
-					"allow_alternative_item": 1,
 					"allow_scrap_items": 1,
 					"include_item_in_manufacturing": 1,
 				}
@@ -343,6 +350,7 @@ def get_children(doctype=None, parent=None, **kwargs):
 
 	fields = [
 		"item_code as value",
+		"item_name as title",
 		"is_expandable as expandable",
 		"parent as parent_id",
 		"qty",
@@ -363,12 +371,6 @@ def get_children(doctype=None, parent=None, **kwargs):
 		query_filters["name"] = kwargs.name
 
 	return frappe.get_all("BOM Creator Item", fields=fields, filters=query_filters, order_by="idx")
-
-
-def get_parent_row_no(doc, name):
-	for row in doc.items:
-		if row.name == name:
-			return row.idx
 
 
 @frappe.whitelist()
@@ -418,6 +420,8 @@ def add_sub_assembly(**kwargs):
 	parent_row_no = ""
 	if not kwargs.convert_to_sub_assembly:
 		item_info = get_item_details(bom_item.item_code)
+		parent_row_no = get_parent_row_no(doc, kwargs.fg_reference_id)
+
 		item_row = doc.append(
 			"items",
 			{
@@ -426,20 +430,20 @@ def add_sub_assembly(**kwargs):
 				"uom": item_info.stock_uom,
 				"fg_item": kwargs.fg_item,
 				"conversion_factor": 1,
+				"parent_row_no": parent_row_no,
 				"fg_reference_id": name,
 				"stock_qty": bom_item.qty,
 				"do_not_explode": 1,
 				"is_expandable": 1,
 				"stock_uom": item_info.stock_uom,
+				"allow_alternative_item": kwargs.allow_alternative_item,
 			},
 		)
 
 		parent_row_no = item_row.idx
 		name = ""
 	else:
-		parent_row_no = [row.idx for row in doc.items if row.name == kwargs.fg_reference_id]
-		if parent_row_no:
-			parent_row_no = parent_row_no[0]
+		parent_row_no = get_parent_row_no(doc, kwargs.fg_reference_id)
 
 	for row in bom_item.get("items"):
 		row = frappe._dict(row)
@@ -469,6 +473,19 @@ def get_item_details(item_code):
 	return frappe.get_cached_value(
 		"Item", item_code, ["item_name", "description", "image", "stock_uom", "default_bom"], as_dict=1
 	)
+
+
+def get_parent_row_no(doc, name):
+	for row in doc.items:
+		if row.name == name:
+			return row.idx
+
+	if name == doc.name:
+		return None
+
+	frappe.msgprint(_("Parent Row No not found for {0}").format(name), alert=True)
+
+	return None
 
 
 @frappe.whitelist()

@@ -4,7 +4,8 @@ erpnext.accounts.unreconcile_payment = {
 	add_unreconcile_btn(frm) {
 		if (frm.doc.docstatus == 1) {
 			if (
-				(frm.doc.doctype == "Journal Entry" && frm.doc.voucher_type != "Journal Entry") ||
+				(frm.doc.doctype == "Journal Entry" &&
+					!["Journal Entry", "Bank Entry", "Cash Entry"].includes(frm.doc.voucher_type)) ||
 				!["Purchase Invoice", "Sales Invoice", "Journal Entry", "Payment Entry"].includes(
 					frm.doc.doctype
 				)
@@ -41,8 +42,8 @@ erpnext.accounts.unreconcile_payment = {
 			selection_map = selections.map(function (elem) {
 				return {
 					company: elem.company,
-					voucher_type: elem.voucher_type,
-					voucher_no: elem.voucher_no,
+					voucher_type: elem.reference_doctype,
+					voucher_no: elem.reference_name,
 					against_voucher_type: frm.doc.doctype,
 					against_voucher_no: frm.doc.name,
 				};
@@ -53,8 +54,8 @@ erpnext.accounts.unreconcile_payment = {
 					company: elem.company,
 					voucher_type: frm.doc.doctype,
 					voucher_no: frm.doc.name,
-					against_voucher_type: elem.voucher_type,
-					against_voucher_no: elem.voucher_no,
+					against_voucher_type: elem.reference_doctype,
+					against_voucher_no: elem.reference_name,
 				};
 			});
 		}
@@ -68,7 +69,7 @@ erpnext.accounts.unreconcile_payment = {
 			let child_table_fields = [
 				{
 					label: __("Voucher Type"),
-					fieldname: "voucher_type",
+					fieldname: "reference_doctype",
 					fieldtype: "Link",
 					options: "DocType",
 					in_list_view: 1,
@@ -76,9 +77,9 @@ erpnext.accounts.unreconcile_payment = {
 				},
 				{
 					label: __("Voucher No"),
-					fieldname: "voucher_no",
+					fieldname: "reference_name",
 					fieldtype: "Dynamic Link",
-					options: "voucher_type",
+					options: "reference_doctype",
 					in_list_view: 1,
 					read_only: 1,
 				},
@@ -90,7 +91,13 @@ erpnext.accounts.unreconcile_payment = {
 					read_only: 1,
 					options: "account_currency",
 				},
-				{ label: __("Currency"), fieldname: "account_currency", fieldtype: "Currency", read_only: 1 },
+				{
+					label: __("Currency"),
+					fieldname: "account_currency",
+					fieldtype: "Link",
+					options: "Currency",
+					read_only: 1,
+				},
 			];
 			let unreconcile_dialog_fields = [
 				{
@@ -99,6 +106,7 @@ erpnext.accounts.unreconcile_payment = {
 					fieldtype: "Table",
 					read_only: 1,
 					fields: child_table_fields,
+					cannot_add_rows: true,
 				},
 			];
 
@@ -119,11 +127,10 @@ erpnext.accounts.unreconcile_payment = {
 						};
 
 						let d = new frappe.ui.Dialog({
-							title: "UnReconcile Allocations",
+							title: __("UnReconcile Allocations"),
 							fields: unreconcile_dialog_fields,
 							size: "large",
-							cannot_add_rows: true,
-							primary_action_label: "UnReconcile",
+							primary_action_label: __("UnReconcile"),
 							primary_action(values) {
 								let selected_allocations = values.allocations.filter((x) => x.__checked);
 								if (selected_allocations.length > 0) {
@@ -137,7 +144,7 @@ erpnext.accounts.unreconcile_payment = {
 									);
 									d.hide();
 								} else {
-									frappe.msgprint("No Selection");
+									frappe.msgprint(__("No Selection"));
 								}
 							},
 						});

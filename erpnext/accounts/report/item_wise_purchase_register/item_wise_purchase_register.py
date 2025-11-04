@@ -11,7 +11,7 @@ import erpnext
 from erpnext.accounts.report.item_wise_sales_register.item_wise_sales_register import (
 	add_sub_total_row,
 	add_total_row,
-	apply_group_by_conditions,
+	apply_order_by_conditions,
 	get_grand_total,
 	get_group_by_and_display_fields,
 	get_tax_accounts,
@@ -178,7 +178,7 @@ def get_columns(additional_table_columns, filters):
 				"fieldname": "invoice",
 				"fieldtype": "Link",
 				"options": "Purchase Invoice",
-				"width": 120,
+				"width": 150,
 			},
 			{"label": _("Posting Date"), "fieldname": "posting_date", "fieldtype": "Date", "width": 120},
 		]
@@ -305,19 +305,13 @@ def apply_conditions(query, pi, pii, filters):
 	if filters.get("item_group"):
 		query = query.where(pii.item_group == filters.get("item_group"))
 
-	if not filters.get("group_by"):
-		query = query.orderby(pi.posting_date, order=Order.desc)
-		query = query.orderby(pii.item_group, order=Order.desc)
-	else:
-		query = apply_group_by_conditions(query, pi, pii, filters)
-
 	return query
 
 
 def get_items(filters, additional_table_columns):
 	doctype = "Purchase Invoice"
-	pi = frappe.qb.DocType(doctype)
-	pii = frappe.qb.DocType(f"{doctype} Item")
+	pi = frappe.qb.DocType("Purchase Invoice")
+	pii = frappe.qb.DocType("Purchase Invoice Item")
 	Item = frappe.qb.DocType("Item")
 	query = (
 		frappe.qb.from_(pi)
@@ -337,6 +331,7 @@ def get_items(filters, additional_table_columns):
 			pi.unrealized_profit_loss_account,
 			pii.item_code,
 			pii.description,
+			pii.item_name,
 			pii.item_group,
 			pii.item_name.as_("pi_item_name"),
 			pii.item_group.as_("pi_item_group"),
@@ -372,7 +367,17 @@ def get_items(filters, additional_table_columns):
 
 	query = apply_conditions(query, pi, pii, filters)
 
-	return query.run(as_dict=True)
+	from frappe.desk.reportview import build_match_conditions
+
+	query, params = query.walk()
+	match_conditions = build_match_conditions(doctype)
+
+	if match_conditions:
+		query += " and " + match_conditions
+
+	query = apply_order_by_conditions(doctype, query, filters)
+
+	return frappe.db.sql(query, params, as_dict=True)
 
 
 def get_aii_accounts():

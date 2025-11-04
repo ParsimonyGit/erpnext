@@ -17,11 +17,29 @@ erpnext.buying = {
 				this.setup_queries(doc, cdt, cdn);
 				super.onload();
 
-				this.frm.set_query('shipping_rule', function() {
+				if (["Purchase Order", "Purchase Receipt", "Purchase Invoice"].includes(this.frm.doctype)) {
+					this.frm.set_query("supplier", function () {
+						return {
+							filters: {
+								is_transporter: 0,
+							},
+						};
+					});
+				}
+
+				this.frm.set_query("shipping_rule", function () {
 					return {
 						filters: {
 							"shipping_rule_type": "Buying"
 						}
+					};
+				});
+
+				this.frm.set_query("project", function (doc) {
+					return {
+						filters: {
+							company: doc.company,
+						},
 					};
 				});
 
@@ -44,6 +62,12 @@ erpnext.buying = {
 							};
 						} else
 							return erpnext.queries.company_address_query(this.frm.doc)
+					});
+				}
+
+				if(this.frm.get_field('dispatch_address')) {
+					this.frm.set_query("dispatch_address", () => {
+						return erpnext.queries.address_query(this.frm.doc);
 					});
 				}
 			}
@@ -129,6 +153,32 @@ erpnext.buying = {
 				});
 			}
 
+			company() {
+				super.company();
+				if (!frappe.meta.has_field(this.frm.doc.doctype, "billing_address")) return;
+
+				frappe.call({
+					method: "erpnext.setup.doctype.company.company.get_billing_shipping_address",
+					args: {
+						name: this.frm.doc.company,
+						billing_address:this.frm.doc.billing_address,
+						shipping_address: this.frm.doc.shipping_address
+					},
+					callback: (r) => {
+						if (!this.frm.doc.billing_address)
+							this.frm.set_value("billing_address", r.message.primary_address || "");
+
+						if (
+							!frappe.meta.has_field(this.frm.doc.doctype, "shipping_address") ||
+							this.frm.doc.shipping_address
+						)
+							return;
+						this.frm.set_value("shipping_address", r.message.shipping_address || "");
+					},
+				});
+				erpnext.utils.set_letter_head(this.frm)
+			}
+
 			supplier_address() {
 				erpnext.utils.get_address_display(this.frm);
 				erpnext.utils.set_taxes_from_address(this.frm, "supplier_address", "supplier_address", "supplier_address");
@@ -151,7 +201,7 @@ erpnext.buying = {
 			}
 
 			qty(doc, cdt, cdn) {
-				if ((doc.doctype == "Purchase Receipt") || (doc.doctype == "Purchase Invoice" && (doc.update_stock || doc.is_return))) {
+				if ((doc.doctype == "Purchase Receipt") || (doc.doctype == "Purchase Invoice" && doc.update_stock)) {
 					this.calculate_received_qty(doc, cdt, cdn)
 				}
 				super.qty(doc, cdt, cdn);
@@ -301,6 +351,12 @@ erpnext.buying = {
 					"shipping_address_display", true);
 			}
 
+			dispatch_address(){
+				var me = this;
+				erpnext.utils.get_address_display(this.frm, "dispatch_address",
+					"dispatch_address_display", true);
+			}
+
 			billing_address() {
 				erpnext.utils.get_address_display(this.frm, "billing_address",
 					"billing_address_display", true);
@@ -425,7 +481,7 @@ erpnext.buying = {
 								item[field] = r.message[field];
 							});
 
-							item.type_of_transaction = item.rejected_qty > 0 ? "Inward" : "Outward";
+							item.type_of_transaction = !doc.is_return > 0 ? "Inward" : "Outward";
 							item.is_rejected = true;
 
 							new erpnext.SerialBatchPackageSelector(
@@ -437,7 +493,7 @@ erpnext.buying = {
 										}
 
 										let update_values = {
-											"serial_and_batch_bundle": r.name,
+											"rejected_serial_and_batch_bundle": r.name,
 											"use_serial_batch_fields": 0,
 											"rejected_qty": qty / flt(item.conversion_factor || 1, precision("conversion_factor", item))
 										}
@@ -575,7 +631,7 @@ erpnext.buying.get_items_from_product_bundle = function(frm) {
 						transaction_date: frm.doc.transaction_date || frm.doc.posting_date,
 						ignore_pricing_rule: frm.doc.ignore_pricing_rule,
 						doctype: frm.doc.doctype
-					}
+					},
 				},
 				freeze: true,
 				callback: function(r) {

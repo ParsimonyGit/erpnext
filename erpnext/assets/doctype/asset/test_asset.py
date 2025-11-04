@@ -15,6 +15,7 @@ from frappe.utils import (
 	is_last_day_of_the_month,
 	nowdate,
 )
+from frappe.utils.data import add_to_date
 
 from erpnext.accounts.doctype.journal_entry.test_journal_entry import make_journal_entry
 from erpnext.accounts.doctype.purchase_invoice.test_purchase_invoice import make_purchase_invoice
@@ -219,6 +220,31 @@ class TestAsset(AssetSetup):
 		)
 		self.assertEqual(accumulated_depr_amount, 18000.0)
 
+		asset_depreciation = frappe.db.get_value(
+			"Asset Depreciation Schedule", {"asset": asset.name, "docstatus": 1}, "name"
+		)
+		last_booked_depreciation_date = frappe.db.get_value(
+			"Depreciation Schedule",
+			{
+				"parent": asset_depreciation,
+				"docstatus": 1,
+				"journal_entry": ["!=", ""],
+			},
+			"schedule_date",
+			order_by="schedule_date desc",
+		)
+
+		before_purchase_date = add_to_date(asset.purchase_date, days=-1)
+		future_date = add_to_date(nowdate(), days=1)
+		if last_booked_depreciation_date:
+			before_last_booked_depreciation_date = add_to_date(last_booked_depreciation_date, days=-1)
+
+		self.assertRaises(frappe.ValidationError, scrap_asset, asset.name, scrap_date=before_purchase_date)
+		self.assertRaises(frappe.ValidationError, scrap_asset, asset.name, scrap_date=future_date)
+		self.assertRaises(
+			frappe.ValidationError, scrap_asset, asset.name, scrap_date=before_last_booked_depreciation_date
+		)
+
 		scrap_asset(asset.name)
 		asset.load_from_db()
 		first_asset_depr_schedule.load_from_db()
@@ -346,6 +372,33 @@ class TestAsset(AssetSetup):
 		si.cancel()
 		self.assertEqual(frappe.db.get_value("Asset", asset.name, "status"), "Partially Depreciated")
 
+	def test_asset_status_after_sales_invoice_cancel(self):
+		from erpnext.accounts.doctype.sales_invoice.test_sales_invoice import create_sales_invoice
+
+		asset = create_asset(
+			calculate_depreciation=1,
+			available_for_use_date="2020-04-01",
+			purchase_date="2020-04-01",
+			expected_value_after_useful_life=0,
+			total_number_of_depreciations=5,
+			opening_number_of_booked_depreciations=2,
+			frequency_of_depreciation=12,
+			depreciation_start_date="2023-03-31",
+			opening_accumulated_depreciation=24000,
+			gross_purchase_amount=60000,
+			submit=1,
+		)
+
+		si = create_sales_invoice(
+			item_code="Macbook Pro", asset=asset.name, qty=1, rate=40000, posting_date=getdate("2023-05-23")
+		)
+		asset.load_from_db()
+		self.assertEqual(frappe.db.get_value("Asset", asset.name, "status"), "Sold")
+
+		si.cancel()
+		asset.load_from_db()
+		self.assertEqual(frappe.db.get_value("Asset", asset.name, "status"), "Partially Depreciated")
+
 	def test_gle_made_by_asset_sale_for_existing_asset(self):
 		from erpnext.accounts.doctype.sales_invoice.test_sales_invoice import create_sales_invoice
 
@@ -444,6 +497,27 @@ class TestAsset(AssetSetup):
 		update_maintenance_status()
 
 		self.assertEqual(frappe.db.get_value("Asset", asset.name, "status"), "Sold")
+
+	def test_asset_splitting_without_depreciation(self):
+		asset = create_asset(
+			calculate_depreciation=0,
+			asset_quantity=10,
+			available_for_use_date="2020-01-01",
+			purchase_date="2020-01-01",
+			gross_purchase_amount=120000,
+			submit=1,
+		)
+
+		self.assertEqual(asset.asset_quantity, 10)
+		self.assertEqual(asset.gross_purchase_amount, 120000)
+
+		new_asset = split_asset(asset.name, 2)
+		asset.load_from_db()
+		self.assertEqual(asset.asset_quantity, 8)
+		self.assertEqual(asset.gross_purchase_amount, 96000)
+
+		self.assertEqual(new_asset.asset_quantity, 2)
+		self.assertEqual(new_asset.gross_purchase_amount, 24000)
 
 	def test_asset_splitting(self):
 		asset = create_asset(
@@ -889,7 +963,7 @@ class TestDepreciationMethods(AssetSetup):
 			["2030-12-31", 28630.14, 28630.14],
 			["2031-12-31", 35684.93, 64315.07],
 			["2032-12-31", 17842.46, 82157.53],
-			["2033-06-06", 5342.46, 87499.99],
+			["2033-06-06", 5342.47, 87500.00],
 		]
 
 		schedules = [
@@ -1492,7 +1566,6 @@ class TestDepreciationBasics(AssetSetup):
 		)
 
 		self.assertSequenceEqual(gle, expected_gle)
-		self.assertEqual(asset.get("value_after_depreciation"), 0)
 
 	def test_expected_value_change(self):
 		"""
@@ -1724,6 +1797,10 @@ def create_asset(**args):
 				"rate_of_depreciation": args.rate_of_depreciation or 0,
 			},
 		)
+
+	if asset.is_composite_asset:
+		asset.gross_purchase_amount = 0
+		asset.purchase_amount = 0
 
 	if not args.do_not_save:
 		try:

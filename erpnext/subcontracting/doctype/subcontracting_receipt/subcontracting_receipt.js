@@ -54,7 +54,7 @@ frappe.ui.form.on("Subcontracting Receipt", {
 						from_date: frm.doc.posting_date,
 						to_date: moment(frm.doc.modified).format("YYYY-MM-DD"),
 						company: frm.doc.company,
-						group_by: "Group by Voucher (Consolidated)",
+						categorize_by: "Categorize by Voucher (Consolidated)",
 						show_cancelled_entries: frm.doc.docstatus === 2,
 					};
 					frappe.set_route("query-report", "General Ledger");
@@ -249,11 +249,15 @@ frappe.ui.form.on("Subcontracting Receipt", {
 		});
 
 		frm.set_query("batch_no", "supplied_items", (doc, cdt, cdn) => {
-			var row = locals[cdt][cdn];
+			let row = locals[cdt][cdn];
+			let filters = {
+				item_code: row.rm_item_code,
+				warehouse: doc.supplier_warehouse,
+			};
+
 			return {
-				filters: {
-					item: row.rm_item_code,
-				},
+				query: "erpnext.controllers.queries.get_batch_no",
+				filters: filters,
 			};
 		});
 
@@ -332,6 +336,10 @@ frappe.ui.form.on("Subcontracting Receipt", {
 
 	reset_raw_materials_table: (frm) => {
 		frm.clear_table("supplied_items");
+		frm.doc.__unsaved = true;
+		if (!frm.doc.set_posting_time) {
+			frm.set_value("posting_time", frappe.datetime.now_time());
+		}
 
 		frm.call({
 			method: "reset_raw_materials",

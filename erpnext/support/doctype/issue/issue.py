@@ -48,13 +48,13 @@ class Issue(Document):
 		priority: DF.Link | None
 		project: DF.Link | None
 		raised_by: DF.Data | None
-		resolution_by: DF.Datetime | None
-		resolution_date: DF.Datetime | None
 		resolution_details: DF.TextEditor | None
 		resolution_time: DF.Duration | None
 		response_by: DF.Datetime | None
 		service_level_agreement: DF.Link | None
 		service_level_agreement_creation: DF.Datetime | None
+		sla_resolution_by: DF.Datetime | None
+		sla_resolution_date: DF.Datetime | None
 		status: DF.Literal["Open", "Replied", "On Hold", "Resolved", "Closed"]
 		subject: DF.Data
 		total_hold_time: DF.Duration | None
@@ -312,7 +312,7 @@ def is_first_response(issue):
 
 
 def calculate_first_response_time(issue, first_responded_on):
-	issue_creation_date = issue.service_level_agreement_creation or issue.creation
+	issue_creation_date = get_datetime(issue.service_level_agreement_creation or issue.creation)
 	issue_creation_time = get_time_in_seconds(issue_creation_date)
 	first_responded_on_in_seconds = get_time_in_seconds(first_responded_on)
 	support_hours = frappe.get_cached_doc(

@@ -3,11 +3,12 @@
 
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+from frappe.tests.utils import FrappeTestCase, change_settings
 from frappe.utils.data import (
 	add_days,
 	add_months,
 	add_to_date,
+	add_years,
 	cint,
 	date_diff,
 	flt,
@@ -470,6 +471,28 @@ class TestSubscription(FrappeTestCase):
 		currency = frappe.db.get_value("Sales Invoice", subscription.invoices[0].name, "currency")
 		self.assertEqual(currency, "USD")
 
+	@change_settings(
+		"Accounts Settings",
+		{"allow_multi_currency_invoices_against_single_party_account": 1},
+	)
+	def test_multi_currency_subscription_with_default_company_currency(self):
+		party = "Test Subscription Customer Multi Currency"
+		frappe.db.set_value("Customer", party, "default_currency", "USD")
+		subscription = create_subscription(
+			start_date="2018-01-01",
+			generate_invoice_at="Beginning of the current subscription period",
+			plans=[{"plan": "_Test Plan Multicurrency", "qty": 1, "currency": "USD"}],
+			party=party,
+		)
+
+		subscription.process(posting_date="2018-01-01")
+		self.assertEqual(len(subscription.invoices), 1)
+		self.assertEqual(subscription.status, "Unpaid")
+
+		# Check the currency of the created invoice
+		currency = frappe.db.get_value("Sales Invoice", subscription.invoices[0].name, "currency")
+		self.assertEqual(currency, "USD")
+
 	def test_subscription_recovery(self):
 		"""Test if Subscription recovers when start/end date run out of sync with created invoices."""
 		subscription = create_subscription(
@@ -533,6 +556,33 @@ class TestSubscription(FrappeTestCase):
 		subscription.reload()
 		self.assertEqual(len(subscription.invoices), 0)
 
+	def test_invoice_generation_days_before_subscription_period_with_prorate(self):
+		settings = frappe.get_single("Subscription Settings")
+		settings.prorate = 1
+		settings.save()
+
+		create_plan(
+			plan_name="_Test Plan Name 5",
+			cost=1000,
+			billing_interval="Year",
+			billing_interval_count=1,
+			currency="INR",
+		)
+
+		start_date = add_days(nowdate(), 2)
+
+		subscription = create_subscription(
+			start_date=start_date,
+			party_type="Supplier",
+			party="_Test Supplier",
+			generate_invoice_at="Days before the current subscription period",
+			generate_new_invoices_past_due_date=1,
+			number_of_days=2,
+			plans=[{"plan": "_Test Plan Name 5", "qty": 1}],
+		)
+		subscription.process(nowdate())
+		self.assertEqual(len(subscription.invoices), 1)
+
 
 def make_plans():
 	create_plan(plan_name="_Test Plan Name", cost=900, currency="INR")
@@ -579,6 +629,12 @@ def create_parties():
 		customer.customer_name = "_Test Subscription Customer"
 		customer.default_currency = "USD"
 		customer.append("accounts", {"company": "_Test Company", "account": "_Test Receivable USD - _TC"})
+		customer.insert()
+
+	if not frappe.db.exists("Customer", "_Test Subscription Customer Multi Currency"):
+		customer = frappe.new_doc("Customer")
+		customer.customer_name = "Test Subscription Customer Multi Currency"
+		customer.default_currency = "USD"
 		customer.insert()
 
 	if not frappe.db.exists("Customer", "_Test Subscription Customer John Doe"):

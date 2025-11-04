@@ -9,6 +9,7 @@ import frappe
 from frappe.tests.utils import FrappeTestCase
 from frappe.utils import flt, today
 
+from erpnext.controllers.accounts_controller import InvalidQtyError
 from erpnext.stock.doctype.item.test_item import create_item
 from erpnext.stock.doctype.material_request.material_request import (
 	make_in_transit_stock_entry,
@@ -17,9 +18,21 @@ from erpnext.stock.doctype.material_request.material_request import (
 	make_supplier_quotation,
 	raise_work_orders,
 )
+from erpnext.stock.doctype.warehouse.test_warehouse import create_warehouse
 
 
 class TestMaterialRequest(FrappeTestCase):
+	def test_material_request_qty(self):
+		mr = frappe.copy_doc(test_records[0])
+		mr.items[0].qty = 0
+		with self.assertRaises(InvalidQtyError):
+			mr.insert()
+
+		# No error with qty=1
+		mr.items[0].qty = 1
+		mr.save()
+		self.assertEqual(mr.items[0].qty, 1)
+
 	def test_make_purchase_order(self):
 		mr = frappe.copy_doc(test_records[0]).insert()
 
@@ -58,6 +71,43 @@ class TestMaterialRequest(FrappeTestCase):
 		self.assertEqual(se.purpose, "Material Transfer")
 		self.assertEqual(se.doctype, "Stock Entry")
 		self.assertEqual(len(se.get("items")), len(mr.get("items")))
+
+	def test_partial_make_stock_entry(self):
+		from erpnext.stock.doctype.stock_entry.stock_entry_utils import make_stock_entry as _make_stock_entry
+
+		mr = frappe.copy_doc(test_records[0]).insert()
+
+		source_wh = create_warehouse(
+			warehouse_name="_Test Source Warehouse",
+			properties={"parent_warehouse": "All Warehouses - _TC"},
+			company="_Test Company",
+		)
+
+		mr = frappe.get_doc("Material Request", mr.name)
+		mr.material_request_type = "Material Transfer"
+
+		for row in mr.items:
+			_make_stock_entry(
+				item_code=row.item_code,
+				qty=10,
+				to_warehouse=source_wh,
+				company="_Test Company",
+				rate=100,
+			)
+
+			row.from_warehouse = source_wh
+			row.qty = 10
+
+		mr.save()
+		mr.submit()
+
+		se = make_stock_entry(mr.name)
+		se.get("items")[0].qty = 5
+		se.insert()
+		se.submit()
+
+		mr.reload()
+		self.assertEqual(mr.status, "Partially Received")
 
 	def test_in_transit_make_stock_entry(self):
 		mr = frappe.copy_doc(test_records[0]).insert()
@@ -815,6 +865,23 @@ class TestMaterialRequest(FrappeTestCase):
 
 		for perm in permissions:
 			perm.delete()
+
+	def test_manufacture_type_status_over_wo(self):
+		from erpnext.stock.doctype.material_request.material_request import raise_work_orders
+
+		mr = make_material_request(
+			item_code="_Test FG Item", material_request_type="Manufacture", do_not_submit=False
+		)
+
+		work_order = raise_work_orders(mr.name)
+		wo = frappe.get_doc("Work Order", work_order[0])
+		wo.wip_warehouse = "_Test Warehouse 1 - _TC"
+		wo.submit()
+
+		mr.reload()
+
+		self.assertEqual(mr.per_ordered, 100)
+		self.assertEqual(mr.status, "Ordered")
 
 
 def get_in_transit_warehouse(company):

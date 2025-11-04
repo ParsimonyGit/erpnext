@@ -16,7 +16,7 @@ from erpnext.setup.doctype.incoterm.incoterm import create_incoterms
 from .default_success_action import get_default_success_action
 
 default_mail_footer = """<div style="padding: 7px; text-align: right; color: #888"><small>Sent via
-	<a style="color: #888" href="http://erpnext.org">ERPNext</a></div>"""
+	<a style="color: #888" href="http://frappe.io/erpnext">ERPNext</a></div>"""
 
 
 def after_install():
@@ -25,6 +25,7 @@ def after_install():
 
 	set_single_defaults()
 	create_print_setting_custom_fields()
+	create_custom_company_links()
 	add_all_roles_to("Administrator")
 	create_default_success_action()
 	create_default_energy_point_rules()
@@ -35,14 +36,8 @@ def after_install():
 	add_app_name()
 	hide_workspaces()
 	update_roles()
+	update_pegged_currencies()
 	frappe.db.commit()
-
-
-def check_setup_wizard_not_completed():
-	if cint(frappe.db.get_single_value("System Settings", "setup_complete") or 0):
-		message = """ERPNext can only be installed on a fresh site where the setup wizard is not completed.
-You can reinstall this site (after saving your data) using: bench --site [sitename] reinstall"""
-		frappe.throw(message)  # nosemgrep
 
 
 def check_frappe_version():
@@ -138,6 +133,39 @@ def create_print_setting_custom_fields():
 	)
 
 
+def create_custom_company_links():
+	"""Add link fields to Company in Email Account and Communication.
+
+	These DocTypes are provided by the Frappe Framework but need to be associated
+	with a company in ERPNext to allow for multitenancy. I.e. one company should
+	not be able to access emails and communications from another company.
+	"""
+	create_custom_fields(
+		{
+			"Email Account": [
+				{
+					"label": _("Company"),
+					"fieldname": "company",
+					"fieldtype": "Link",
+					"options": "Company",
+					"insert_after": "email_id",
+				},
+			],
+			"Communication": [
+				{
+					"label": _("Company"),
+					"fieldname": "company",
+					"fieldtype": "Link",
+					"options": "Company",
+					"insert_after": "email_account",
+					"fetch_from": "email_account.company",
+					"read_only": 1,
+				},
+			],
+		},
+	)
+
+
 def create_default_success_action():
 	for success_action in get_default_success_action():
 		if not frappe.db.exists("Success Action", success_action.get("ref_doctype")):
@@ -182,7 +210,7 @@ def add_standard_navbar_items():
 		{
 			"item_label": "Frappe School",
 			"item_type": "Route",
-			"route": "https://frappe.school?utm_source=in_app",
+			"route": "https://frappe.io/school?utm_source=in_app",
 			"is_standard": 1,
 		},
 		{
@@ -234,12 +262,47 @@ def update_roles():
 
 def create_default_role_profiles():
 	for role_profile_name, roles in DEFAULT_ROLE_PROFILES.items():
+		if frappe.db.exists("Role Profile", role_profile_name):
+			role_profile = frappe.get_doc("Role Profile", role_profile_name)
+			existing_roles = [row.role for row in role_profile.roles]
+
+			role_profile.roles = [row for row in role_profile.roles if row.role in roles]
+
+			for role in roles:
+				if role not in existing_roles:
+					role_profile.append("roles", {"role": role})
+
+			role_profile.save(ignore_permissions=True)
+
+			continue
+
 		role_profile = frappe.new_doc("Role Profile")
 		role_profile.role_profile = role_profile_name
 		for role in roles:
 			role_profile.append("roles", {"role": role})
 
 		role_profile.insert(ignore_permissions=True)
+
+
+def update_pegged_currencies():
+	doc = frappe.get_doc("Pegged Currencies", "Pegged Currencies")
+
+	existing_sources = {item.source_currency for item in doc.pegged_currency_item}
+
+	currencies_to_add = [
+		{"source_currency": "AED", "pegged_against": "USD", "pegged_exchange_rate": 3.6725},
+		{"source_currency": "BHD", "pegged_against": "USD", "pegged_exchange_rate": 0.376},
+		{"source_currency": "JOD", "pegged_against": "USD", "pegged_exchange_rate": 0.709},
+		{"source_currency": "OMR", "pegged_against": "USD", "pegged_exchange_rate": 0.3845},
+		{"source_currency": "QAR", "pegged_against": "USD", "pegged_exchange_rate": 3.64},
+		{"source_currency": "SAR", "pegged_against": "USD", "pegged_exchange_rate": 3.75},
+	]
+
+	for currency in currencies_to_add:
+		if currency["source_currency"] not in existing_sources:
+			doc.append("pegged_currency_item", currency)
+
+	doc.save()
 
 
 DEFAULT_ROLE_PROFILES = {

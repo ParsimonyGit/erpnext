@@ -31,6 +31,9 @@ class ProcessStatementOfAccounts(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		from erpnext.accounts.doctype.process_statement_of_accounts_cc.process_statement_of_accounts_cc import (
+			ProcessStatementOfAccountsCC,
+		)
 		from erpnext.accounts.doctype.process_statement_of_accounts_customer.process_statement_of_accounts_customer import (
 			ProcessStatementOfAccountsCustomer,
 		)
@@ -41,7 +44,8 @@ class ProcessStatementOfAccounts(Document):
 		ageing_based_on: DF.Literal["Due Date", "Posting Date"]
 		based_on_payment_terms: DF.Check
 		body: DF.TextEditor | None
-		cc_to: DF.Link | None
+		categorize_by: DF.Literal["", "Categorize by Voucher", "Categorize by Voucher (Consolidated)"]
+		cc_to: DF.TableMultiSelect[ProcessStatementOfAccountsCC]
 		collection_name: DF.DynamicLink | None
 		company: DF.Link
 		cost_center: DF.TableMultiSelect[PSOACostCenter]
@@ -53,7 +57,6 @@ class ProcessStatementOfAccounts(Document):
 		finance_book: DF.Link | None
 		frequency: DF.Literal["Weekly", "Monthly", "Quarterly"]
 		from_date: DF.Date | None
-		group_by: DF.Literal["", "Group by Voucher", "Group by Voucher (Consolidated)"]
 		ignore_cr_dr_notes: DF.Check
 		ignore_exchange_rate_revaluation_journals: DF.Check
 		include_ageing: DF.Check
@@ -70,6 +73,7 @@ class ProcessStatementOfAccounts(Document):
 		sales_person: DF.Link | None
 		sender: DF.Link | None
 		show_net_values_in_party_account: DF.Check
+		show_remarks: DF.Check
 		start_date: DF.Date | None
 		subject: DF.Data | None
 		terms_and_conditions: DF.Link | None
@@ -78,6 +82,10 @@ class ProcessStatementOfAccounts(Document):
 	# end: auto-generated types
 
 	def validate(self):
+		self.validate_account()
+		self.validate_company_for_table("Cost Center")
+		self.validate_company_for_table("Project")
+
 		if not self.subject:
 			self.subject = "Statement Of Accounts for {{ customer.customer_name }}"
 		if not self.body:
@@ -99,6 +107,43 @@ class ProcessStatementOfAccounts(Document):
 			if self.start_date and getdate(self.start_date) >= getdate(today()):
 				self.to_date = self.start_date
 				self.from_date = add_months(self.to_date, -1 * self.filter_duration)
+
+	def validate_account(self):
+		if not self.account:
+			return
+
+		if self.company != frappe.get_cached_value("Account", self.account, "company"):
+			frappe.throw(
+				_("Account {0} doesn't belong to Company {1}").format(
+					frappe.bold(self.account),
+					frappe.bold(self.company),
+				)
+			)
+
+	def validate_company_for_table(self, doctype):
+		field = frappe.scrub(doctype)
+		if not self.get(field):
+			return
+
+		fieldname = field + "_name"
+
+		values = set(d.get(fieldname) for d in self.get(field))
+		invalid_values = frappe.db.get_all(
+			doctype, filters={"name": ["in", values], "company": ["!=", self.company]}, pluck="name"
+		)
+
+		if invalid_values:
+			msg = _("<p>Following {0}s doesn't belong to Company {1} :</p>").format(
+				doctype, frappe.bold(self.company)
+			)
+
+			msg += (
+				"<ul>"
+				+ "".join(_("<li>{}</li>").format(frappe.bold(row)) for row in invalid_values)
+				+ "</ul>"
+			)
+
+			frappe.throw(_(msg))
 
 
 def get_report_pdf(doc, consolidated=True):
@@ -125,8 +170,8 @@ def get_statement_dict(doc, get_statement_dict=False):
 
 		tax_id = frappe.get_doc("Customer", entry.customer).tax_id
 		presentation_currency = (
-			get_party_account_currency("Customer", entry.customer, doc.company)
-			or doc.currency
+			doc.currency
+			or get_party_account_currency("Customer", entry.customer, doc.company)
 			or get_company_currency(doc.company)
 		)
 
@@ -187,6 +232,7 @@ def get_common_filters(doc):
 			"finance_book": doc.finance_book if doc.finance_book else None,
 			"account": [doc.account] if doc.account else None,
 			"cost_center": [cc.cost_center_name for cc in doc.cost_center],
+			"show_remarks": doc.show_remarks,
 		}
 	)
 
@@ -199,7 +245,7 @@ def get_gl_filters(doc, entry, tax_id, presentation_currency):
 		"party": [entry.customer],
 		"party_name": [entry.customer_name] if entry.customer_name else None,
 		"presentation_currency": presentation_currency,
-		"group_by": doc.group_by,
+		"categorize_by": doc.categorize_by,
 		"currency": doc.currency,
 		"project": [p.project_name for p in doc.project],
 		"show_opening_entries": 0,
@@ -231,17 +277,21 @@ def get_ar_filters(doc, entry):
 
 def get_html(doc, filters, entry, col, res, ageing):
 	base_template_path = "frappe/www/printview.html"
-	template_path = (
-		"erpnext/accounts/doctype/process_statement_of_accounts/process_statement_of_accounts.html"
-		if doc.report == "General Ledger"
-		else "erpnext/accounts/doctype/process_statement_of_accounts/process_statement_of_accounts_accounts_receivable.html"
-	)
+	template_path = "erpnext/accounts/doctype/process_statement_of_accounts/process_statement_of_accounts_accounts_receivable.html"
+	if doc.report == "General Ledger":
+		template_path = (
+			"erpnext/accounts/doctype/process_statement_of_accounts/process_statement_of_accounts.html"
+		)
+
+	process_soa_html = frappe.get_hooks("process_soa_html")
+	# fetching custom print format for Process Statement of Accounts
+	if process_soa_html and process_soa_html.get(doc.report):
+		template_path = process_soa_html[doc.report][-1]
 
 	if doc.letter_head:
 		from frappe.www.printview import get_letter_head
 
 		letter_head = get_letter_head(doc, 0)
-
 	html = frappe.render_template(
 		template_path,
 		{
@@ -257,7 +307,6 @@ def get_html(doc, filters, entry, col, res, ageing):
 			else None,
 		},
 	)
-
 	html = frappe.render_template(
 		base_template_path,
 		{"body": html, "css": get_print_style(), "title": "Statement For " + entry.customer},
@@ -316,13 +365,16 @@ def get_recipients_and_cc(customer, doc):
 	recipients = []
 	for clist in doc.customers:
 		if clist.customer == customer:
-			recipients.append(clist.billing_email)
+			if clist.billing_email:
+				for email in clist.billing_email.split(","):
+					recipients.append(email.strip())
 			if doc.primary_mandatory and clist.primary_email:
-				recipients.append(clist.primary_email)
+				for email in clist.primary_email.split(","):
+					recipients.append(email.strip())
 	cc = []
 	if doc.cc_to != "":
 		try:
-			cc = [frappe.get_value("User", doc.cc_to, "email")]
+			cc = [frappe.get_value("User", user.cc, "email") for user in doc.cc_to]
 		except Exception:
 			pass
 
@@ -472,6 +524,7 @@ def send_emails(document_name, from_scheduler=False, posting_date=None):
 				reference_doctype="Process Statement Of Accounts",
 				reference_name=document_name,
 				attachments=attachments,
+				expose_recipients="header",
 			)
 
 		if doc.enable_auto_email and from_scheduler:
@@ -497,7 +550,7 @@ def send_auto_email():
 	selected = frappe.get_list(
 		"Process Statement Of Accounts",
 		filters={"enable_auto_email": 1},
-		or_filters={"to_date": format_date(today()), "posting_date": format_date(today())},
+		or_filters={"to_date": today(), "posting_date": today()},
 	)
 	for entry in selected:
 		send_emails(entry.name, from_scheduler=True)

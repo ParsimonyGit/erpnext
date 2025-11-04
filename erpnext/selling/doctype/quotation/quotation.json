@@ -21,6 +21,7 @@
   "column_break1",
   "order_type",
   "company",
+  "has_unit_price_items",
   "amended_from",
   "currency_and_price_list",
   "currency",
@@ -32,6 +33,7 @@
   "ignore_pricing_rule",
   "items_section",
   "scan_barcode",
+  "last_scanned_warehouse",
   "items",
   "sec_break23",
   "total_qty",
@@ -65,6 +67,7 @@
   "grand_total",
   "rounding_adjustment",
   "rounded_total",
+  "disable_rounded_total",
   "in_words",
   "section_break_44",
   "apply_discount_on",
@@ -95,8 +98,9 @@
   "shipping_address",
   "company_address_section",
   "company_address",
-  "column_break_87",
   "company_address_display",
+  "column_break_87",
+  "company_contact_person",
   "terms_tab",
   "payment_schedule_section",
   "payment_terms_template",
@@ -661,6 +665,7 @@
    "width": "200px"
   },
   {
+   "depends_on": "eval:!doc.disable_rounded_total",
    "fieldname": "base_rounding_adjustment",
    "fieldtype": "Currency",
    "label": "Rounding Adjustment (Company Currency)",
@@ -709,6 +714,7 @@
    "width": "200px"
   },
   {
+   "depends_on": "eval:!doc.disable_rounded_total",
    "fieldname": "rounding_adjustment",
    "fieldtype": "Currency",
    "label": "Rounding Adjustment",
@@ -931,6 +937,7 @@
    "fieldname": "lost_reasons",
    "fieldtype": "Table MultiSelect",
    "label": "Lost Reasons",
+   "no_copy": 1,
    "options": "Quotation Lost Reason Detail",
    "read_only": 1
   },
@@ -1067,13 +1074,41 @@
    "fieldname": "named_place",
    "fieldtype": "Data",
    "label": "Named Place"
+  },
+  {
+   "default": "0",
+   "fieldname": "disable_rounded_total",
+   "fieldtype": "Check",
+   "label": "Disable Rounded Total"
+  },
+  {
+   "fieldname": "company_contact_person",
+   "fieldtype": "Link",
+   "label": "Company Contact Person",
+   "options": "Contact",
+   "print_hide": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "has_unit_price_items",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Has Unit Price Items",
+   "no_copy": 1
+  },
+  {
+   "depends_on": "eval: doc.last_scanned_warehouse",
+   "fieldname": "last_scanned_warehouse",
+   "fieldtype": "Data",
+   "is_virtual": 1,
+   "label": "Last Scanned Warehouse"
   }
  ],
  "icon": "fa fa-shopping-cart",
  "idx": 82,
  "is_submittable": 1,
  "links": [],
- "modified": "2024-03-20 16:04:21.567847",
+ "modified": "2025-07-31 17:23:48.875382",
  "modified_by": "Administrator",
  "module": "Selling",
  "name": "Quotation",
@@ -1164,6 +1199,7 @@
    "role": "Maintenance User"
   }
  ],
+ "row_format": "Dynamic",
  "search_fields": "status,transaction_date,party_name,order_type",
  "show_name_in_global_search": 1,
  "sort_field": "modified",

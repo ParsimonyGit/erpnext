@@ -1,9 +1,9 @@
 import frappe
 from frappe import qb
 from frappe.tests.utils import FrappeTestCase
-from frappe.utils import flt, nowdate
+from frappe.utils import add_days, flt, get_first_day, get_last_day, nowdate
 
-from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_delivery_note
+from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_delivery_note, make_sales_return
 from erpnext.accounts.doctype.sales_invoice.test_sales_invoice import create_sales_invoice
 from erpnext.accounts.report.gross_profit.gross_profit import execute
 from erpnext.stock.doctype.delivery_note.delivery_note import make_sales_invoice
@@ -392,7 +392,6 @@ class TestGrossProfit(FrappeTestCase):
 		"""
 		Item Qty for Sales Invoices with multiple instances of same item go in the -ve. Ideally, the credit noteshould cancel out the invoice items.
 		"""
-		from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_sales_return
 
 		# Invoice with an item added twice
 		sinv = self.create_sales_invoice(qty=1, rate=100, posting_date=nowdate(), do_not_submit=True)
@@ -418,12 +417,12 @@ class TestGrossProfit(FrappeTestCase):
 			"item_name": self.item,
 			"warehouse": "Stores - _GP",
 			"qty": 0.0,
-			"avg._selling_rate": 0.0,
+			"avg._selling_rate": 100,
 			"valuation_rate": 0.0,
-			"selling_amount": -100.0,
+			"selling_amount": 0.0,
 			"buying_amount": 0.0,
-			"gross_profit": -100.0,
-			"gross_profit_%": 100.0,
+			"gross_profit": 0.0,
+			"gross_profit_%": 0.0,
 		}
 		gp_entry = [x for x in data if x.parent_invoice == sinv.name]
 		# Both items of Invoice should have '0' qty
@@ -605,3 +604,72 @@ class TestGrossProfit(FrappeTestCase):
 		item_from_sinv2 = [x for x in data if x.parent_invoice == sinv2.name]
 		self.assertEqual(len(item_from_sinv2), 1)
 		self.assertEqual(1800, item_from_sinv2[0].valuation_rate)
+
+	def test_gross_profit_groupby_invoices(self):
+		create_sales_invoice(
+			qty=1,
+			rate=100,
+			company=self.company,
+			customer=self.customer,
+			item_code=self.item,
+			item_name=self.item,
+			cost_center=self.cost_center,
+			warehouse=self.warehouse,
+			debit_to=self.debit_to,
+			parent_cost_center=self.cost_center,
+			update_stock=0,
+			currency="INR",
+			income_account=self.income_account,
+			expense_account=self.expense_account,
+		)
+
+		filters = frappe._dict(
+			company=self.company, from_date=nowdate(), to_date=nowdate(), group_by="Invoice"
+		)
+
+		_, data = execute(filters=filters)
+		total = data[-1]
+
+		self.assertEqual(total.selling_amount, 100.0)
+		self.assertEqual(total.buying_amount, 0.0)
+		self.assertEqual(total.gross_profit, 100.0)
+		self.assertEqual(total.get("gross_profit_%"), 100.0)
+
+	def test_profit_for_later_period_return(self):
+		month_start_date, month_end_date = get_first_day(nowdate()), get_last_day(nowdate())
+
+		# create sales invoice on month start date
+		sinv = self.create_sales_invoice(qty=1, rate=100, do_not_save=True, do_not_submit=True)
+		sinv.set_posting_time = 1
+		sinv.posting_date = month_start_date
+		sinv.save().submit()
+
+		# create credit note on next month start date
+		cr_note = make_sales_return(sinv.name)
+		cr_note.set_posting_time = 1
+		cr_note.posting_date = add_days(month_end_date, 1)
+		cr_note.save().submit()
+
+		# apply filters for invoiced period
+		filters = frappe._dict(
+			company=self.company, from_date=month_start_date, to_date=month_end_date, group_by="Invoice"
+		)
+
+		_, data = execute(filters=filters)
+		total = data[-1]
+
+		self.assertEqual(total.selling_amount, 100.0)
+		self.assertEqual(total.buying_amount, 0.0)
+		self.assertEqual(total.gross_profit, 100.0)
+		self.assertEqual(total.get("gross_profit_%"), 100.0)
+
+		# extend filters upto returned period
+		filters.update(to_date=add_days(month_end_date, 1))
+
+		_, data = execute(filters=filters)
+		total = data[-1]
+
+		self.assertEqual(total.selling_amount, 0.0)
+		self.assertEqual(total.buying_amount, 0.0)
+		self.assertEqual(total.gross_profit, 0.0)
+		self.assertEqual(total.get("gross_profit_%"), 0.0)

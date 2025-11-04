@@ -48,6 +48,7 @@
   "column_break_37",
   "discount_percentage",
   "discount_amount",
+  "distributed_discount_amount",
   "base_rate_with_margin",
   "sec_break1",
   "rate",
@@ -71,7 +72,7 @@
   "item_tax_amount",
   "rm_supp_cost",
   "landed_cost_voucher_amount",
-  "rate_difference_with_purchase_invoice",
+  "amount_difference_with_purchase_invoice",
   "billed_amt",
   "warehouse_and_reference",
   "warehouse",
@@ -777,7 +778,8 @@
    "fieldtype": "Data",
    "hidden": 1,
    "label": "Material Request Item",
-   "read_only": 1
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "expense_account",
@@ -911,7 +913,7 @@
   },
   {
    "collapsible": 1,
-   "collapsible_depends_on": "eval: doc.margin_type || doc.discount_amount",
+   "collapsible_depends_on": "eval: doc.margin_type || doc.discount_amount || doc.distributed_discount_amount",
    "fieldname": "discount_and_margin_section",
    "fieldtype": "Section Break",
    "label": "Discount and Margin"
@@ -999,14 +1001,6 @@
    "read_only": 1
   },
   {
-   "fieldname": "rate_difference_with_purchase_invoice",
-   "fieldtype": "Currency",
-   "label": "Rate Difference with Purchase Invoice",
-   "no_copy": 1,
-   "print_hide": 1,
-   "read_only": 1
-  },
-  {
    "depends_on": "eval:doc.use_serial_batch_fields === 0 || doc.docstatus === 1",
    "fieldname": "serial_and_batch_bundle",
    "fieldtype": "Link",
@@ -1045,7 +1039,8 @@
    "fieldtype": "Link",
    "label": "Rejected Serial and Batch Bundle",
    "no_copy": 1,
-   "options": "Serial and Batch Bundle"
+   "options": "Serial and Batch Bundle",
+   "search_index": 1
   },
   {
    "depends_on": "eval:doc.use_serial_batch_fields === 0",
@@ -1135,12 +1130,26 @@
    "no_copy": 1,
    "options": "Company:company:default_currency",
    "print_hide": 1
+  },
+  {
+   "fieldname": "distributed_discount_amount",
+   "fieldtype": "Currency",
+   "label": "Distributed Discount Amount",
+   "options": "currency"
+  },
+  {
+   "fieldname": "amount_difference_with_purchase_invoice",
+   "fieldtype": "Currency",
+   "label": "Amount Difference with Purchase Invoice",
+   "no_copy": 1,
+   "print_hide": 1,
+   "read_only": 1
   }
  ],
  "idx": 1,
  "istable": 1,
  "links": [],
- "modified": "2024-07-19 12:14:21.521466",
+ "modified": "2025-10-14 12:59:20.384056",
  "modified_by": "Administrator",
  "module": "Stock",
  "name": "Purchase Receipt Item",

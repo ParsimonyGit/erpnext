@@ -4,7 +4,7 @@
 import frappe
 from frappe import _
 from frappe.utils import add_days, flt, get_datetime_str, nowdate
-from frappe.utils.data import now_datetime
+from frappe.utils.data import getdate, now_datetime
 from frappe.utils.nestedset import get_root_of
 
 from erpnext import get_default_company
@@ -45,6 +45,54 @@ def before_tests():
 	frappe.db.commit()
 
 
+def get_pegged_currencies():
+	pegged_currencies = frappe.get_all(
+		"Pegged Currency Details",
+		filters={"parent": "Pegged Currencies"},
+		fields=["source_currency", "pegged_against", "pegged_exchange_rate"],
+	)
+
+	pegged_map = {
+		currency.source_currency: {
+			"pegged_against": currency.pegged_against,
+			"ratio": flt(currency.pegged_exchange_rate),
+		}
+		for currency in pegged_currencies
+	}
+	return pegged_map
+
+
+def get_pegged_rate(pegged_map, from_currency, to_currency, transaction_date=None):
+	from_entry = pegged_map.get(from_currency)
+	to_entry = pegged_map.get(to_currency)
+
+	if from_currency in pegged_map and to_currency in pegged_map:
+		# Case 1: Both are present and pegged to same bases
+		if from_entry["pegged_against"] == to_entry["pegged_against"]:
+			return (1 / from_entry["ratio"]) * to_entry["ratio"]
+
+		# Case 2: Both are present but pegged to different bases
+		base_from = from_entry["pegged_against"]
+		base_to = to_entry["pegged_against"]
+		base_rate = get_exchange_rate(base_from, base_to, transaction_date)
+
+		if not base_rate:
+			return None
+
+		return (1 / from_entry["ratio"]) * base_rate * to_entry["ratio"]
+
+	# Case 3: from_currency is pegged to to_currency
+	if from_entry and from_entry["pegged_against"] == to_currency:
+		return flt(from_entry["ratio"])
+
+	# Case 4: to_currency is pegged to from_currency
+	if to_entry and to_entry["pegged_against"] == from_currency:
+		return 1 / flt(to_entry["ratio"])
+
+	""" If only one entry exists but doesn’t match pegged currency logic, return None """
+	return None
+
+
 @frappe.whitelist()
 def get_exchange_rate(from_currency, to_currency, transaction_date=None, args=None):
 	if not (from_currency and to_currency):
@@ -55,7 +103,8 @@ def get_exchange_rate(from_currency, to_currency, transaction_date=None, args=No
 
 	if not transaction_date:
 		transaction_date = nowdate()
-	currency_settings = frappe.get_doc("Accounts Settings").as_dict()
+
+	currency_settings = frappe.get_cached_doc("Accounts Settings")
 	allow_stale_rates = currency_settings.get("allow_stale")
 
 	filters = [
@@ -84,6 +133,13 @@ def get_exchange_rate(from_currency, to_currency, transaction_date=None, args=No
 	if frappe.get_cached_value("Currency Exchange Settings", "Currency Exchange Settings", "disabled"):
 		return 0.00
 
+	pegged_currencies = {}
+
+	if currency_settings.allow_pegged_currencies_exchange_rates:
+		pegged_currencies = get_pegged_currencies()
+		if rate := get_pegged_rate(pegged_currencies, from_currency, to_currency, transaction_date):
+			return rate
+
 	try:
 		cache = frappe.cache()
 		key = f"currency_exchange_rate_{transaction_date}:{from_currency}:{to_currency}"
@@ -95,8 +151,12 @@ def get_exchange_rate(from_currency, to_currency, transaction_date=None, args=No
 			settings = frappe.get_cached_doc("Currency Exchange Settings")
 			req_params = {
 				"transaction_date": transaction_date,
-				"from_currency": from_currency,
-				"to_currency": to_currency,
+				"from_currency": from_currency
+				if from_currency not in pegged_currencies
+				else pegged_currencies[from_currency]["pegged_against"],
+				"to_currency": to_currency
+				if to_currency not in pegged_currencies
+				else pegged_currencies[to_currency]["pegged_against"],
 			}
 			params = {}
 			for row in settings.req_params:
@@ -108,6 +168,15 @@ def get_exchange_rate(from_currency, to_currency, transaction_date=None, args=No
 			for res_key in settings.result_key:
 				value = value[format_ces_api(str(res_key.key), req_params)]
 			cache.setex(name=key, time=21600, value=flt(value))
+
+		# Support multiple pegged currencies
+		value = flt(value)
+
+		if currency_settings.allow_pegged_currencies_exchange_rates and to_currency in pegged_currencies:
+			value *= flt(pegged_currencies[to_currency]["ratio"])
+		if currency_settings.allow_pegged_currencies_exchange_rates and from_currency in pegged_currencies:
+			value /= flt(pegged_currencies[from_currency]["ratio"])
+
 		return flt(value)
 	except Exception:
 		frappe.log_error("Unable to fetch exchange rate")

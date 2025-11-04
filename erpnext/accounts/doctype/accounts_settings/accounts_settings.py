@@ -10,6 +10,7 @@ from frappe.custom.doctype.property_setter.property_setter import make_property_
 from frappe.model.document import Document
 from frappe.utils import cint
 
+from erpnext.accounts.utils import sync_auto_reconcile_config
 from erpnext.stock.utils import check_pending_reposting
 
 
@@ -24,9 +25,12 @@ class AccountsSettings(Document):
 
 		acc_frozen_upto: DF.Date | None
 		add_taxes_from_item_tax_template: DF.Check
+		add_taxes_from_taxes_and_charges_template: DF.Check
 		allow_multi_currency_invoices_against_single_party_account: DF.Check
+		allow_pegged_currencies_exchange_rates: DF.Check
 		allow_stale: DF.Check
 		auto_reconcile_payments: DF.Check
+		auto_reconciliation_job_trigger: DF.Int
 		automatically_fetch_payment_terms: DF.Check
 		automatically_process_deferred_accounting_entry: DF.Check
 		book_asset_depreciation_entry_automatically: DF.Check
@@ -43,15 +47,23 @@ class AccountsSettings(Document):
 		enable_fuzzy_matching: DF.Check
 		enable_immutable_ledger: DF.Check
 		enable_party_matching: DF.Check
+		exchange_gain_loss_posting_date: DF.Literal["Invoice", "Payment", "Reconciliation Date"]
+		fetch_valuation_rate_for_internal_transaction: DF.Check
 		frozen_accounts_modifier: DF.Link | None
 		general_ledger_remarks_length: DF.Int
 		ignore_account_closing_balance: DF.Check
+		ignore_is_opening_check_for_reporting: DF.Check
+		maintain_same_internal_transaction_rate: DF.Check
+		maintain_same_rate_action: DF.Literal["Stop", "Warn"]
 		make_payment_via_journal_entry: DF.Check
 		merge_similar_account_heads: DF.Check
 		over_billing_allowance: DF.Currency
 		post_change_gl_entries: DF.Check
+		receivable_payable_fetch_method: DF.Literal["Buffered Cursor", "UnBuffered Cursor", "Raw SQL"]
 		receivable_payable_remarks_length: DF.Int
+		reconciliation_queue_size: DF.Int
 		role_allowed_to_over_bill: DF.Link | None
+		role_to_override_stop_action: DF.Link | None
 		round_row_wise_tax: DF.Check
 		show_balance_in_coa: DF.Check
 		show_inclusive_tax_in_print: DF.Check
@@ -64,6 +76,7 @@ class AccountsSettings(Document):
 	# end: auto-generated types
 
 	def validate(self):
+		self.validate_auto_tax_settings()
 		old_doc = self.get_doc_before_save()
 		clear_cache = False
 
@@ -90,6 +103,8 @@ class AccountsSettings(Document):
 		if clear_cache:
 			frappe.clear_cache()
 
+		self.validate_and_sync_auto_reconcile_config()
+
 	def validate_stale_days(self):
 		if not self.allow_stale and cint(self.stale_days) <= 0:
 			frappe.msgprint(
@@ -114,3 +129,35 @@ class AccountsSettings(Document):
 	def validate_pending_reposts(self):
 		if self.acc_frozen_upto:
 			check_pending_reposting(self.acc_frozen_upto)
+
+	def validate_and_sync_auto_reconcile_config(self):
+		if self.has_value_changed("auto_reconciliation_job_trigger"):
+			if (
+				cint(self.auto_reconciliation_job_trigger) > 0
+				and cint(self.auto_reconciliation_job_trigger) < 60
+			):
+				sync_auto_reconcile_config(self.auto_reconciliation_job_trigger)
+			else:
+				frappe.throw(_("Cron Interval should be between 1 and 59 Min"))
+
+		if self.has_value_changed("reconciliation_queue_size"):
+			if cint(self.reconciliation_queue_size) < 5 or cint(self.reconciliation_queue_size) > 100:
+				frappe.throw(_("Queue Size should be between 5 and 100"))
+
+	def validate_auto_tax_settings(self):
+		if self.add_taxes_from_item_tax_template and self.add_taxes_from_taxes_and_charges_template:
+			frappe.throw(
+				_("You cannot enable both the settings '{0}' and '{1}'.").format(
+					frappe.bold(_(self.meta.get_label("add_taxes_from_item_tax_template"))),
+					frappe.bold(_(self.meta.get_label("add_taxes_from_taxes_and_charges_template"))),
+				),
+				title=_("Auto Tax Settings Error"),
+			)
+
+	@frappe.whitelist()
+	def drop_ar_sql_procedures(self):
+		from erpnext.accounts.report.accounts_receivable.accounts_receivable import InitSQLProceduresForAR
+
+		frappe.db.sql(f"drop function if exists {InitSQLProceduresForAR.genkey_function_name}")
+		frappe.db.sql(f"drop procedure if exists {InitSQLProceduresForAR.init_procedure_name}")
+		frappe.db.sql(f"drop procedure if exists {InitSQLProceduresForAR.allocate_procedure_name}")

@@ -25,6 +25,7 @@ class StockSettings(Document):
 
 		action_if_quality_inspection_is_not_submitted: DF.Literal["Stop", "Warn"]
 		action_if_quality_inspection_is_rejected: DF.Literal["Stop", "Warn"]
+		allow_existing_serial_no: DF.Check
 		allow_from_dn: DF.Check
 		allow_from_pr: DF.Check
 		allow_internal_transfer_at_arms_length_price: DF.Check
@@ -32,6 +33,8 @@ class StockSettings(Document):
 		allow_partial_reservation: DF.Check
 		allow_to_edit_stock_uom_qty_for_purchase: DF.Check
 		allow_to_edit_stock_uom_qty_for_sales: DF.Check
+		allow_to_make_quality_inspection_after_purchase_or_delivery: DF.Check
+		allow_uom_with_conversion_rate_defined_in_item: DF.Check
 		auto_create_serial_and_batch_bundle_for_outward: DF.Check
 		auto_indent: DF.Check
 		auto_insert_price_list_rate_if_missing: DF.Check
@@ -54,12 +57,14 @@ class StockSettings(Document):
 		role_allowed_to_create_edit_back_dated_transactions: DF.Link | None
 		role_allowed_to_over_deliver_receive: DF.Link | None
 		sample_retention_warehouse: DF.Link | None
+		set_serial_and_batch_bundle_naming_based_on_naming_series: DF.Check
 		show_barcode_field: DF.Check
 		stock_auth_role: DF.Link | None
 		stock_frozen_upto: DF.Date | None
 		stock_frozen_upto_days: DF.Int
 		stock_uom: DF.Link | None
 		update_existing_price_list_rate: DF.Check
+		update_price_list_based_on: DF.Literal["Rate", "Price List Rate"]
 		use_naming_series: DF.Check
 		use_serial_batch_fields: DF.Check
 		valuation_method: DF.Literal["FIFO", "Moving Average", "LIFO"]
@@ -74,6 +79,7 @@ class StockSettings(Document):
 			"default_warehouse",
 			"set_qty_in_transactions_based_on_serial_no_input",
 			"use_serial_batch_fields",
+			"set_serial_and_batch_bundle_naming_based_on_naming_series",
 		]:
 			frappe.db.set_default(key, self.get(key, ""))
 
@@ -99,24 +105,9 @@ class StockSettings(Document):
 		self.validate_clean_description_html()
 		self.validate_pending_reposts()
 		self.validate_stock_reservation()
+		self.validate_auto_insert_price_list_rate_if_missing()
 		self.change_precision_for_for_sales()
 		self.change_precision_for_purchase()
-		self.validate_use_batch_wise_valuation()
-
-	def validate_use_batch_wise_valuation(self):
-		if not self.do_not_use_batchwise_valuation:
-			return
-
-		if self.valuation_method == "FIFO":
-			frappe.throw(_("Cannot disable batch wise valuation for FIFO valuation method."))
-
-		if frappe.get_all(
-			"Item", filters={"valuation_method": "FIFO", "is_stock_item": 1, "has_batch_no": 1}, limit=1
-		):
-			frappe.throw(_("Can't disable batch wise valuation for items with FIFO valuation method."))
-
-		if frappe.get_all("Batch", filters={"use_batchwise_valuation": 1}, limit=1):
-			frappe.throw(_("Can't disable batch wise valuation for active batches."))
 
 	def validate_warehouses(self):
 		warehouse_fields = ["default_warehouse", "sample_retention_warehouse"]
@@ -130,7 +121,11 @@ class StockSettings(Document):
 				)
 
 	def cant_change_valuation_method(self):
-		previous_valuation_method = self.get_doc_before_save().get("valuation_method")
+		doc_before_save = self.get_doc_before_save()
+		if not doc_before_save:
+			return
+
+		previous_valuation_method = doc_before_save.get("valuation_method")
 
 		if previous_valuation_method and previous_valuation_method != self.valuation_method:
 			# check if there are any stock ledger entries against items
@@ -224,6 +219,23 @@ class StockSettings(Document):
 							frappe.bold(_("Stock Reservation"))
 						)
 					)
+
+	def validate_auto_insert_price_list_rate_if_missing(self):
+		if (
+			self.auto_insert_price_list_rate_if_missing
+			and self.has_value_changed("auto_insert_price_list_rate_if_missing")
+			and frappe.get_single_value("Selling Settings", "fallback_to_default_price_list")
+		):
+			selling_meta = frappe.get_meta("Selling Settings")
+			frappe.msgprint(
+				_(
+					"You have enabled {0} and {1} in {2}. This can lead to prices from the default price list being inserted in the transaction price list."
+				).format(
+					"<i>{}</i>".format(_(self.meta.get_label("auto_insert_price_list_rate_if_missing"))),
+					"<i>{}</i>".format(_(selling_meta.get_label("fallback_to_default_price_list"))),
+					frappe.bold(_("Selling Settings")),
+				)
+			)
 
 	def on_update(self):
 		self.toggle_warehouse_field_for_inter_warehouse_transfer()

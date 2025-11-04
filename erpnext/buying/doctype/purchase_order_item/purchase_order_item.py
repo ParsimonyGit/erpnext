@@ -37,6 +37,7 @@ class PurchaseOrderItem(Document):
 		description: DF.TextEditor | None
 		discount_amount: DF.Currency
 		discount_percentage: DF.Percent
+		distributed_discount_amount: DF.Currency
 		expected_delivery_date: DF.Date | None
 		expense_account: DF.Link | None
 		fg_item: DF.Link | None
@@ -83,6 +84,7 @@ class PurchaseOrderItem(Document):
 		stock_qty: DF.Float
 		stock_uom: DF.Link
 		stock_uom_rate: DF.Currency
+		subcontracted_quantity: DF.Float
 		supplier_part_no: DF.Data | None
 		supplier_quotation: DF.Link | None
 		supplier_quotation_item: DF.Link | None

@@ -124,6 +124,11 @@ class POSClosingEntry(StatusUpdater):
 
 	def on_submit(self):
 		consolidate_pos_invoices(closing_entry=self)
+		frappe.publish_realtime(
+			f"poe_{self.pos_opening_entry}_closed",
+			self,
+			docname=f"POS Opening Entry/{self.pos_opening_entry}",
+		)
 
 	def on_cancel(self):
 		unconsolidate_pos_invoices(closing_entry=self)
@@ -156,6 +161,8 @@ def get_pos_invoices(start, end, pos_profile, user):
 		`tabPOS Invoice`
 	where
 		owner = %s and docstatus = 1 and pos_profile = %s and ifnull(consolidated_invoice,'') = ''
+	order by
+		timestamp
 	""",
 		(user, pos_profile),
 		as_dict=1,

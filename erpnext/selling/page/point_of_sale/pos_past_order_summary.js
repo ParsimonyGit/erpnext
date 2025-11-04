@@ -1,7 +1,8 @@
 erpnext.PointOfSale.PastOrderSummary = class {
-	constructor({ wrapper, events }) {
+	constructor({ wrapper, settings, events }) {
 		this.wrapper = wrapper;
 		this.events = events;
+		this.print_receipt_on_order_complete = settings.print_receipt_on_order_complete;
 
 		this.init_component();
 	}
@@ -46,7 +47,7 @@ erpnext.PointOfSale.PastOrderSummary = class {
 
 	init_email_print_dialog() {
 		const email_dialog = new frappe.ui.Dialog({
-			title: "Email Receipt",
+			title: __("Email Receipt"),
 			fields: [
 				{ fieldname: "email_id", fieldtype: "Data", options: "Email", label: "Email ID", reqd: 1 },
 				{ fieldname: "content", fieldtype: "Small Text", label: "Message (if any)" },
@@ -59,7 +60,7 @@ erpnext.PointOfSale.PastOrderSummary = class {
 		this.email_dialog = email_dialog;
 
 		const print_dialog = new frappe.ui.Dialog({
-			title: "Print Receipt",
+			title: __("Print Receipt"),
 			fields: [{ fieldname: "print", fieldtype: "Data", label: "Print Preview" }],
 			primary_action: () => {
 				this.print_receipt();
@@ -72,20 +73,24 @@ erpnext.PointOfSale.PastOrderSummary = class {
 	get_upper_section_html(doc) {
 		const { status } = doc;
 		let indicator_color = "";
+		const is_customer_naming_by_customer_name = frappe.sys_defaults.cust_master_name !== "Customer Name";
 
 		["Paid", "Consolidated"].includes(status) && (indicator_color = "green");
 		status === "Draft" && (indicator_color = "red");
 		status === "Return" && (indicator_color = "grey");
 
 		return `<div class="left-section">
-					<div class="customer-name">${doc.customer}</div>
-					<div class="customer-email">${this.customer_email}</div>
+					<div class="customer-section">
+						<div class="customer-name">${doc.customer_name}</div>
+						${is_customer_naming_by_customer_name ? `<div class="customer-code">${doc.customer}</div>` : ""}
+						<div class="customer-email">${this.customer_email}</div>
+					</div>
 					<div class="cashier">${__("Sold by")}: ${doc.owner}</div>
 				</div>
 				<div class="right-section">
 					<div class="paid-amount">${format_currency(doc.paid_amount, doc.currency)}</div>
 					<div class="invoice-name">${doc.name}</div>
-					<span class="indicator-pill whitespace-nowrap ${indicator_color}"><span>${doc.status}</span></span>
+					<span class="indicator-pill whitespace-nowrap ${indicator_color}"><span>${__(doc.status)}</span></span>
 				</div>`;
 	}
 
@@ -112,7 +117,7 @@ erpnext.PointOfSale.PastOrderSummary = class {
 	get_discount_html(doc) {
 		if (doc.discount_amount) {
 			return `<div class="summary-row-wrapper">
-						<div>Discount (${doc.additional_discount_percentage} %)</div>
+						<div>${__("Discount")} (${doc.additional_discount_percentage} %)</div>
 						<div>${format_currency(doc.discount_amount, doc.currency)}</div>
 					</div>`;
 		} else {
@@ -355,6 +360,10 @@ erpnext.PointOfSale.PastOrderSummary = class {
 		const condition_btns_map = this.get_condition_btn_map(after_submission);
 
 		this.add_summary_btns(condition_btns_map);
+
+		if (after_submission && this.print_receipt_on_order_complete) {
+			this.print_receipt();
+		}
 	}
 
 	attach_document_info(doc) {

@@ -209,17 +209,9 @@ $.extend(erpnext.utils, {
 	},
 
 	make_bank_account: function (doctype, docname) {
-		frappe.call({
-			method: "erpnext.accounts.doctype.bank_account.bank_account.make_bank_account",
-			args: {
-				doctype: doctype,
-				docname: docname,
-			},
-			freeze: true,
-			callback: function (r) {
-				var doclist = frappe.model.sync(r.message);
-				frappe.set_route("Form", doclist[0].doctype, doclist[0].name);
-			},
+		frappe.new_doc("Bank Account", {
+			party_type: doctype,
+			party: docname,
 		});
 	},
 
@@ -263,6 +255,10 @@ $.extend(erpnext.utils, {
 								fieldname: dimension["fieldname"],
 								label: __(dimension["doctype"]),
 								fieldtype: "MultiSelectList",
+								depends_on:
+									report_name === "Stock Balance"
+										? "eval:doc.show_dimension_wise_stock === 1"
+										: "",
 								get_data: function (txt) {
 									return frappe.db.get_link_options(dimension["doctype"], txt);
 								},
@@ -444,6 +440,16 @@ $.extend(erpnext.utils, {
 			},
 		});
 		return fiscal_year;
+	},
+
+	set_letter_head: function (frm) {
+		if (frm.fields_dict.letter_head) {
+			frappe.db.get_value("Company", frm.doc.company, "default_letter_head").then((res) => {
+				if (res.message?.default_letter_head) {
+					frm.set_value("letter_head", res.message.default_letter_head);
+				}
+			});
+		}
 	},
 });
 
@@ -653,6 +659,63 @@ erpnext.utils.update_child_items = function (opts) {
 					query: "erpnext.controllers.queries.item_query",
 					filters: filters,
 				};
+			},
+			onchange: function () {
+				const me = this;
+
+				frm.call({
+					method: "erpnext.stock.get_item_details.get_item_details",
+					args: {
+						doc: frm.doc,
+						args: {
+							item_code: this.value,
+							set_warehouse: frm.doc.set_warehouse,
+							customer: frm.doc.customer || frm.doc.party_name,
+							quotation_to: frm.doc.quotation_to,
+							supplier: frm.doc.supplier,
+							currency: frm.doc.currency,
+							is_internal_supplier: frm.doc.is_internal_supplier,
+							is_internal_customer: frm.doc.is_internal_customer,
+							conversion_rate: frm.doc.conversion_rate,
+							price_list: frm.doc.selling_price_list || frm.doc.buying_price_list,
+							price_list_currency: frm.doc.price_list_currency,
+							plc_conversion_rate: frm.doc.plc_conversion_rate,
+							company: frm.doc.company,
+							order_type: frm.doc.order_type,
+							is_pos: cint(frm.doc.is_pos),
+							is_return: cint(frm.doc.is_return),
+							is_subcontracted: frm.doc.is_subcontracted,
+							ignore_pricing_rule: frm.doc.ignore_pricing_rule,
+							doctype: frm.doc.doctype,
+							name: frm.doc.name,
+							qty: me.doc.qty || 1,
+							uom: me.doc.uom,
+							pos_profile: cint(frm.doc.is_pos) ? frm.doc.pos_profile : "",
+							tax_category: frm.doc.tax_category,
+							child_doctype: frm.doc.doctype + " Item",
+							is_old_subcontracting_flow: frm.doc.is_old_subcontracting_flow,
+						},
+					},
+					callback: function (r) {
+						if (r.message) {
+							const { qty, price_list_rate: rate, uom, conversion_factor, bom_no } = r.message;
+
+							const row = dialog.fields_dict.trans_items.df.data.find(
+								(doc) => doc.idx == me.doc.idx
+							);
+							if (row) {
+								Object.assign(row, {
+									conversion_factor: me.doc.conversion_factor || conversion_factor,
+									uom: me.doc.uom || uom,
+									qty: me.doc.qty || qty,
+									rate: me.doc.rate || rate,
+									bom_no: bom_no,
+								});
+								dialog.fields_dict.trans_items.grid.refresh();
+							}
+						}
+					},
+				});
 			},
 		},
 		{
@@ -920,6 +983,7 @@ erpnext.utils.map_current_doc = function (opts) {
 			target: opts.target,
 			date_field: opts.date_field || undefined,
 			setters: opts.setters,
+			read_only_setters: opts.read_only_setters,
 			data_fields: data_fields,
 			get_query: opts.get_query,
 			add_filters_group: 1,
@@ -942,7 +1006,7 @@ erpnext.utils.map_current_doc = function (opts) {
 
 				if (
 					opts.allow_child_item_selection ||
-					["Purchase Receipt", "Delivery Note"].includes(opts.source_doctype)
+					["Purchase Receipt", "Delivery Note", "Pick List"].includes(opts.source_doctype)
 				) {
 					// args contains filtered child docnames
 					opts.args = args;
@@ -1141,9 +1205,9 @@ function set_time_to_resolve_and_response(frm, apply_sla_for_resolution) {
 	if (apply_sla_for_resolution) {
 		let time_to_resolve;
 		if (!frm.doc.resolution_date) {
-			time_to_resolve = get_time_left(frm.doc.resolution_by, frm.doc.agreement_status);
+			time_to_resolve = get_time_left(frm.doc.sla_resolution_by, frm.doc.agreement_status);
 		} else {
-			time_to_resolve = get_status(frm.doc.resolution_by, frm.doc.resolution_date);
+			time_to_resolve = get_status(frm.doc.sla_resolution_by, frm.doc.sla_resolution_date);
 		}
 
 		alert += `

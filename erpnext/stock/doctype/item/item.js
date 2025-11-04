@@ -7,6 +7,35 @@ const SALES_DOCTYPES = ["Quotation", "Sales Order", "Delivery Note", "Sales Invo
 const PURCHASE_DOCTYPES = ["Purchase Order", "Purchase Receipt", "Purchase Invoice"];
 
 frappe.ui.form.on("Item", {
+	valuation_method(frm) {
+		if (!frm.is_new() && frm.doc.valuation_method === "Moving Average") {
+			let stock_exists = frm.doc.__onload && frm.doc.__onload.stock_exists ? 1 : 0;
+			let current_valuation_method = frm.doc.__onload.current_valuation_method;
+
+			if (stock_exists && current_valuation_method !== frm.doc.valuation_method) {
+				let msg = __(
+					"Changing the valuation method to Moving Average will affect new transactions. If backdated entries are added, earlier FIFO-based entries will be reposted, which may change closing balances."
+				);
+				msg += "<br>";
+				msg += __(
+					"Also you can't switch back to FIFO after setting the valuation method to Moving Average for this item."
+				);
+				msg += "<br>";
+				msg += __("Do you want to change valuation method?");
+
+				frappe.confirm(
+					msg,
+					() => {
+						frm.set_value("valuation_method", "Moving Average");
+					},
+					() => {
+						frm.set_value("valuation_method", current_valuation_method);
+					}
+				);
+			}
+		}
+	},
+
 	setup: function (frm) {
 		frm.add_fetch("attribute", "numeric_values", "numeric_values");
 		frm.add_fetch("attribute", "from_range", "from_range");
@@ -663,39 +692,41 @@ $.extend(erpnext.item, {
 		}
 
 		frm.doc.attributes.forEach(function (d) {
-			let p = new Promise((resolve) => {
-				if (!d.numeric_values) {
-					frappe
-						.call({
-							method: "frappe.client.get_list",
-							args: {
-								doctype: "Item Attribute Value",
-								filters: [["parent", "=", d.attribute]],
-								fields: ["attribute_value"],
-								limit_page_length: 0,
-								parent: "Item Attribute",
-								order_by: "idx",
-							},
-						})
-						.then((r) => {
-							if (r.message) {
-								attr_val_fields[d.attribute] = r.message.map(function (d) {
-									return d.attribute_value;
-								});
-								resolve();
-							}
-						});
-				} else {
-					let values = [];
-					for (var i = d.from_range; i <= d.to_range; i = flt(i + d.increment, 6)) {
-						values.push(i);
+			if (!d.disabled) {
+				let p = new Promise((resolve) => {
+					if (!d.numeric_values) {
+						frappe
+							.call({
+								method: "frappe.client.get_list",
+								args: {
+									doctype: "Item Attribute Value",
+									filters: [["parent", "=", d.attribute]],
+									fields: ["attribute_value"],
+									limit_page_length: 0,
+									parent: "Item Attribute",
+									order_by: "idx",
+								},
+							})
+							.then((r) => {
+								if (r.message) {
+									attr_val_fields[d.attribute] = r.message.map(function (d) {
+										return d.attribute_value;
+									});
+									resolve();
+								}
+							});
+					} else {
+						let values = [];
+						for (var i = d.from_range; i <= d.to_range; i = flt(i + d.increment, 6)) {
+							values.push(i);
+						}
+						attr_val_fields[d.attribute] = values;
+						resolve();
 					}
-					attr_val_fields[d.attribute] = values;
-					resolve();
-				}
-			});
+				});
 
-			promises.push(p);
+				promises.push(p);
+			}
 		}, this);
 
 		Promise.all(promises).then(() => {
@@ -710,26 +741,29 @@ $.extend(erpnext.item, {
 		for (var i = 0; i < frm.doc.attributes.length; i++) {
 			var fieldtype, desc;
 			var row = frm.doc.attributes[i];
-			if (row.numeric_values) {
-				fieldtype = "Float";
-				desc =
-					"Min Value: " +
-					row.from_range +
-					" , Max Value: " +
-					row.to_range +
-					", in Increments of: " +
-					row.increment;
-			} else {
-				fieldtype = "Data";
-				desc = "";
+
+			if (!row.disabled) {
+				if (row.numeric_values) {
+					fieldtype = "Float";
+					desc =
+						"Min Value: " +
+						row.from_range +
+						" , Max Value: " +
+						row.to_range +
+						", in Increments of: " +
+						row.increment;
+				} else {
+					fieldtype = "Data";
+					desc = "";
+				}
+				fields = fields.concat({
+					label: row.attribute,
+					fieldname: row.attribute,
+					fieldtype: fieldtype,
+					reqd: 0,
+					description: desc,
+				});
 			}
-			fields = fields.concat({
-				label: row.attribute,
-				fieldname: row.attribute,
-				fieldtype: fieldtype,
-				reqd: 0,
-				description: desc,
-			});
 		}
 
 		if (frm.doc.image) {

@@ -28,6 +28,7 @@ class SubcontractingReceiptItem(Document):
 		is_scrap_item: DF.Check
 		item_code: DF.Link
 		item_name: DF.Data | None
+		job_card: DF.Link | None
 		manufacturer: DF.Link | None
 		manufacturer_part_no: DF.Data | None
 		page_break: DF.Check
@@ -54,6 +55,7 @@ class SubcontractingReceiptItem(Document):
 		serial_and_batch_bundle: DF.Link | None
 		serial_no: DF.SmallText | None
 		service_cost_per_qty: DF.Currency
+		service_expense_account: DF.Link | None
 		stock_uom: DF.Link
 		subcontracting_order: DF.Link | None
 		subcontracting_order_item: DF.Data | None

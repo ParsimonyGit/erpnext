@@ -96,7 +96,12 @@ erpnext.SerialBatchPackageSelector = class SerialNoBatchBundleUpdate {
 			options: "Warehouse",
 			default: this.get_warehouse(),
 			onchange: () => {
-				this.item.warehouse = this.dialog.get_value("warehouse");
+				if (this.item?.is_rejected) {
+					this.item.rejected_warehouse = this.dialog.get_value("warehouse");
+				} else {
+					this.item.warehouse = this.dialog.get_value("warehouse");
+				}
+
 				this.get_auto_data();
 			},
 			get_query: () => {
@@ -282,10 +287,6 @@ erpnext.SerialBatchPackageSelector = class SerialNoBatchBundleUpdate {
 		return fields;
 	}
 
-	set_serial_nos_from_series() {}
-
-	set_batch_nos_from_series() {}
-
 	set_serial_nos_from_range() {
 		const serial_no_range = this.dialog.get_value("serial_no_range");
 
@@ -436,6 +437,11 @@ erpnext.SerialBatchPackageSelector = class SerialNoBatchBundleUpdate {
 					fieldname: "batch_no",
 					label: __("Batch No"),
 					in_list_view: 1,
+					get_route_options_for_new_doc: () => {
+						return {
+							item: this.item.item_code,
+						};
+					},
 					change() {
 						let doc = this.doc;
 						if (!doc.qty && me.item.type_of_transaction === "Outward") {
@@ -451,10 +457,13 @@ erpnext.SerialBatchPackageSelector = class SerialNoBatchBundleUpdate {
 							(["Purchase Receipt", "Purchase Invoice"].includes(this.frm.doc.doctype) &&
 								!this.frm.doc.is_return) ||
 							(this.frm.doc.doctype === "Stock Entry" &&
-								this.frm.doc.purpose === "Material Receipt")
+								(this.frm.doc.purpose === "Material Receipt" ||
+									(this.frm.doc.purpose === "Manufacture" && this.item.is_finished_item)))
 						) {
 							is_inward = true;
 						}
+
+						let include_expired_batches = me.include_expired_batches();
 
 						return {
 							query: "erpnext.controllers.queries.get_batch_no",
@@ -463,6 +472,7 @@ erpnext.SerialBatchPackageSelector = class SerialNoBatchBundleUpdate {
 								warehouse:
 									this.item.s_warehouse || this.item.t_warehouse || this.item.warehouse,
 								is_inward: is_inward,
+								include_expired_batches: include_expired_batches,
 							},
 						};
 					},
@@ -491,6 +501,14 @@ erpnext.SerialBatchPackageSelector = class SerialNoBatchBundleUpdate {
 		return fields;
 	}
 
+	include_expired_batches() {
+		return (
+			this.frm.doc.doctype === "Stock Reconciliation" ||
+			(this.frm.doc.doctype === "Stock Entry" &&
+				["Material Receipt", "Material Transfer", "Material Issue"].includes(this.frm.doc.purpose))
+		);
+	}
+
 	get_auto_data() {
 		let { qty, based_on } = this.dialog.get_values();
 
@@ -508,16 +526,23 @@ erpnext.SerialBatchPackageSelector = class SerialNoBatchBundleUpdate {
 			based_on = "FIFO";
 		}
 
+		let warehouse = this.item.warehouse || this.item.s_warehouse;
+		if (this.item?.is_rejected) {
+			warehouse = this.item.rejected_warehouse;
+		}
+
 		if (qty) {
 			frappe.call({
 				method: "erpnext.stock.doctype.serial_and_batch_bundle.serial_and_batch_bundle.get_auto_data",
 				args: {
 					item_code: this.item.item_code,
-					warehouse: this.item.warehouse || this.item.s_warehouse,
+					warehouse: warehouse,
 					has_serial_no: this.item.has_serial_no,
 					has_batch_no: this.item.has_batch_no,
 					qty: qty,
 					based_on: based_on,
+					posting_date: this.frm.doc.posting_date,
+					posting_time: this.frm.doc.posting_time,
 				},
 				callback: (r) => {
 					if (r.message) {
@@ -627,6 +652,10 @@ erpnext.SerialBatchPackageSelector = class SerialNoBatchBundleUpdate {
 			frappe.throw(__("Please select a Warehouse"));
 		}
 
+		if (this.item?.is_rejected && this.item.rejected_warehouse === this.item.warehouse) {
+			frappe.throw(__("Rejected Warehouse and Accepted Warehouse cannot be same."));
+		}
+
 		frappe
 			.call({
 				method: "erpnext.stock.doctype.serial_and_batch_bundle.serial_and_batch_bundle.add_serial_batch_ledgers",
@@ -668,6 +697,10 @@ erpnext.SerialBatchPackageSelector = class SerialNoBatchBundleUpdate {
 	}
 
 	get_warehouse() {
+		if (this.item?.is_rejected) {
+			return this.item.rejected_warehouse;
+		}
+
 		return this.item?.type_of_transaction === "Outward"
 			? this.item.warehouse || this.item.s_warehouse
 			: this.item.warehouse || this.item.t_warehouse;
@@ -701,5 +734,8 @@ erpnext.SerialBatchPackageSelector = class SerialNoBatchBundleUpdate {
 		});
 
 		this.dialog.fields_dict.entries.grid.refresh();
+		if (this.dialog.fields_dict.entries.df.data?.length) {
+			this.dialog.set_value("enter_manually", 0);
+		}
 	}
 };

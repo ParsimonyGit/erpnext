@@ -56,7 +56,6 @@
   "section_break_34",
   "total_allocated_amount",
   "base_total_allocated_amount",
-  "set_exchange_gain_loss",
   "column_break_36",
   "unallocated_amount",
   "difference_amount",
@@ -203,14 +202,14 @@
    "fieldtype": "Column Break"
   },
   {
-   "depends_on": "party",
+   "depends_on": "eval: doc.party && doc.party_type !== \"Employee\"",
    "fieldname": "contact_person",
    "fieldtype": "Link",
    "label": "Contact",
    "options": "Contact"
   },
   {
-   "depends_on": "contact_person",
+   "depends_on": "eval: (doc.contact_person || doc.party_type === \"Employee\") && doc.contact_email",
    "fieldname": "contact_email",
    "fieldtype": "Data",
    "label": "Email",
@@ -224,10 +223,12 @@
    "label": "Accounts"
   },
   {
+   "allow_on_submit": 1,
    "depends_on": "party",
    "fieldname": "party_balance",
    "fieldtype": "Currency",
    "label": "Party Balance",
+   "no_copy": 1,
    "print_hide": 1,
    "read_only": 1
   },
@@ -253,6 +254,7 @@
    "reqd": 1
   },
   {
+   "allow_on_submit": 1,
    "depends_on": "paid_from",
    "fieldname": "paid_from_account_balance",
    "fieldtype": "Currency",
@@ -286,6 +288,7 @@
    "reqd": 1
   },
   {
+   "allow_on_submit": 1,
    "depends_on": "paid_to",
    "fieldname": "paid_to_account_balance",
    "fieldtype": "Currency",
@@ -389,11 +392,6 @@
    "options": "Company:company:default_currency",
    "print_hide": 1,
    "read_only": 1
-  },
-  {
-   "fieldname": "set_exchange_gain_loss",
-   "fieldtype": "Button",
-   "label": "Set Exchange Gain / Loss"
   },
   {
    "fieldname": "column_break_36",
@@ -790,6 +788,7 @@
    "search_index": 1
   }
  ],
+ "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [
@@ -801,7 +800,7 @@
    "table_fieldname": "payment_entries"
   }
  ],
- "modified": "2024-05-31 17:07:06.197249",
+ "modified": "2025-05-15 18:01:04.013025",
  "modified_by": "Administrator",
  "module": "Accounts",
  "name": "Payment Entry",
@@ -841,6 +840,7 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "show_name_in_global_search": 1,
  "sort_field": "modified",
  "sort_order": "DESC",

@@ -60,6 +60,7 @@ class PricingRule(Document):
 		disable: DF.Check
 		discount_amount: DF.Currency
 		discount_percentage: DF.Float
+		dont_enforce_free_item_qty: DF.Check
 		for_price_list: DF.Link | None
 		free_item: DF.Link | None
 		free_item_rate: DF.Currency
@@ -168,7 +169,7 @@ class PricingRule(Document):
 
 		tocheck = frappe.scrub(self.get("applicable_for", ""))
 		if tocheck and not self.get(tocheck):
-			throw(_("{0} is required").format(self.meta.get_label(tocheck)), frappe.MandatoryError)
+			throw(_("{0} is required").format(_(self.meta.get_label(tocheck))), frappe.MandatoryError)
 
 		if self.apply_rule_on_other:
 			o_field = "other_" + frappe.scrub(self.apply_rule_on_other)
@@ -446,7 +447,19 @@ def get_pricing_rule_for_item(args, doc=None, for_validate=False):
 			if isinstance(pricing_rule, str):
 				pricing_rule = frappe.get_cached_doc("Pricing Rule", pricing_rule)
 				update_pricing_rule_uom(pricing_rule, args)
-				pricing_rule.apply_rule_on_other_items = get_pricing_rule_items(pricing_rule) or []
+				fetch_other_item = True if pricing_rule.apply_rule_on_other else False
+				pricing_rule.apply_rule_on_other_items = (
+					get_pricing_rule_items(pricing_rule, other_items=fetch_other_item) or []
+				)
+
+			if pricing_rule.coupon_code_based == 1:
+				if not args.coupon_code:
+					continue
+				coupon_code = frappe.db.get_value(
+					doctype="Coupon Code", filters={"pricing_rule": pricing_rule.name}, fieldname="name"
+				)
+				if args.coupon_code != coupon_code:
+					continue
 
 			if pricing_rule.get("suggestion"):
 				continue
@@ -472,9 +485,6 @@ def get_pricing_rule_for_item(args, doc=None, for_validate=False):
 					item_details["apply_rule_on_other_items"] = json.dumps(
 						pricing_rule.apply_rule_on_other_items
 					)
-
-			if pricing_rule.coupon_code_based == 1 and args.coupon_code is None:
-				return item_details
 
 			if not pricing_rule.validate_applied_rule:
 				if pricing_rule.price_or_product_discount == "Price":
@@ -635,7 +645,7 @@ def remove_pricing_rule_for_item(pricing_rules, item_details, item_code=None, ra
 			if pricing_rule.margin_type in ["Percentage", "Amount"]:
 				item_details.margin_rate_or_amount = 0.0
 				item_details.margin_type = None
-		elif pricing_rule.get("free_item"):
+		elif pricing_rule.get("free_item") and not pricing_rule.get("dont_enforce_free_item_qty"):
 			item_details.remove_free_item = (
 				item_code if pricing_rule.get("same_item") else pricing_rule.get("free_item")
 			)

@@ -147,10 +147,10 @@ class BOMConfigurator {
 									if (!node.expanded) {
 										view.tree.load_children(node, true);
 										$(node.parent[0]).find(".tree-children").show();
-										node.$toolbar.find(".expand-all-btn").html("Collapse All");
+										node.$toolbar.find(".expand-all-btn").html(__("Collapse All"));
 									} else {
 										node.$tree_link.trigger("click");
-										node.$toolbar.find(".expand-all-btn").html("Expand All");
+										node.$toolbar.find(".expand-all-btn").html(__("Expand All"));
 									}
 								},
 								condition: function (node) {
@@ -190,10 +190,10 @@ class BOMConfigurator {
 									if (!node.expanded) {
 										view.tree.load_children(node, true);
 										$(node.parent[0]).find(".tree-children").show();
-										node.$toolbar.find(".expand-all-btn").html("Collapse All");
+										node.$toolbar.find(".expand-all-btn").html(__("Collapse All"));
 									} else {
 										node.$tree_link.trigger("click");
-										node.$toolbar.find(".expand-all-btn").html("Expand All");
+										node.$toolbar.find(".expand-all-btn").html(__("Expand All"));
 									}
 								},
 								condition: function (node) {
@@ -210,6 +210,13 @@ class BOMConfigurator {
 			[
 				{ label: __("Item"), fieldname: "item_code", fieldtype: "Link", options: "Item", reqd: 1 },
 				{ label: __("Qty"), fieldname: "qty", default: 1.0, fieldtype: "Float", reqd: 1 },
+				{
+					label: __("Allow Alternative Item"),
+					fieldname: "allow_alternative_item",
+					default: 1.0,
+					fieldtype: "Check",
+					reqd: 1,
+				},
 			],
 			(data) => {
 				if (!node.data.parent_id) {
@@ -224,6 +231,7 @@ class BOMConfigurator {
 						item_code: data.item_code,
 						fg_reference_id: node.data.name || this.frm.doc.name,
 						qty: data.qty,
+						allow_alternative_item: data.allow_alternative_item,
 					},
 					callback: (r) => {
 						view.events.load_tree(r, node);
@@ -258,6 +266,7 @@ class BOMConfigurator {
 					fg_item: node.data.value,
 					fg_reference_id: node.data.name || this.frm.doc.name,
 					bom_item: bom_item,
+					allow_alternative_item: bom_item.allow_alternative_item,
 				},
 				callback: (r) => {
 					view.events.load_tree(r, node);
@@ -275,6 +284,14 @@ class BOMConfigurator {
 				fieldname: "item_code",
 				fieldtype: "Link",
 				options: "Item",
+				reqd: 1,
+				read_only: read_only,
+			},
+			{
+				label: __("Allow Alternative Item"),
+				fieldname: "allow_alternative_item",
+				default: 1.0,
+				fieldtype: "Check",
 				reqd: 1,
 				read_only: read_only,
 			},
@@ -400,7 +417,7 @@ class BOMConfigurator {
 						doctype: doctype,
 						docname: docname,
 						qty: data.qty,
-						parent: node.data.parent_id,
+						parent: node.data.parent_id ? node.data.parent_id : this.frm.doc.name,
 					},
 					callback: (r) => {
 						node.data.qty = data.qty;

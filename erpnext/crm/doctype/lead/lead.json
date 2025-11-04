@@ -377,7 +377,7 @@
    "depends_on": "eval:!doc.__islocal",
    "fieldname": "notes_tab",
    "fieldtype": "Tab Break",
-   "label": "Comments"
+   "label": "Notes"
   },
   {
    "collapsible": 1,
@@ -497,7 +497,7 @@
   {
    "fieldname": "state",
    "fieldtype": "Data",
-   "label": "State"
+   "label": "State/Province"
   },
   {
    "fieldname": "country",
@@ -512,11 +512,12 @@
    "show_dashboard": 1
   }
  ],
+ "grid_page_length": 50,
  "icon": "fa fa-user",
  "idx": 5,
  "image_field": "image",
  "links": [],
- "modified": "2023-12-01 18:46:49.468526",
+ "modified": "2025-06-26 11:02:01.158901",
  "modified_by": "Administrator",
  "module": "CRM",
  "name": "Lead",
@@ -575,6 +576,7 @@
    "role": "Sales User"
   }
  ],
+ "row_format": "Dynamic",
  "search_fields": "lead_name,lead_owner,status",
  "sender_field": "email_id",
  "sender_name_field": "lead_name",

@@ -9,7 +9,8 @@ from frappe.contacts.address_and_contact import (
 	load_address_and_contact,
 )
 from frappe.model.document import Document
-from frappe.utils import comma_and, get_link_to_form
+from frappe.utils import comma_and, get_link_to_form, validate_iban
+from frappe.utils.deprecations import deprecated
 
 
 class BankAccount(Document):
@@ -48,11 +49,10 @@ class BankAccount(Document):
 		self.name = self.account_name + " - " + self.bank
 
 	def on_trash(self):
-		delete_contact_and_address("BankAccount", self.name)
+		delete_contact_and_address("Bank Account", self.name)
 
 	def validate(self):
 		self.validate_company()
-		self.validate_iban()
 		self.validate_account()
 		self.update_default_bank_account()
 
@@ -72,34 +72,10 @@ class BankAccount(Document):
 		if self.is_company_account and not self.company:
 			frappe.throw(_("Company is manadatory for company account"))
 
+	@deprecated
 	def validate_iban(self):
-		"""
-		Algorithm: https://en.wikipedia.org/wiki/International_Bank_Account_Number#Validating_the_IBAN
-		"""
-		# IBAN field is optional
-		if not self.iban:
-			return
-
-		def encode_char(c):
-			# Position in the alphabet (A=1, B=2, ...) plus nine
-			return str(9 + ord(c) - 64)
-
-		# remove whitespaces, upper case to get the right number from ord()
-		iban = "".join(self.iban.split(" ")).upper()
-
-		# Move country code and checksum from the start to the end
-		flipped = iban[4:] + iban[:4]
-
-		# Encode characters as numbers
-		encoded = [encode_char(c) if ord(c) >= 65 and ord(c) <= 90 else c for c in flipped]
-
-		try:
-			to_check = int("".join(encoded))
-		except ValueError:
-			frappe.throw(_("IBAN is not valid"))
-
-		if to_check % 97 != 1:
-			frappe.throw(_("IBAN is not valid"))
+		"""Kept for backward compatibility, will be removed in v16."""
+		validate_iban(self.iban, throw=True)
 
 	def update_default_bank_account(self):
 		if self.is_default and not self.disabled:
@@ -109,6 +85,7 @@ class BankAccount(Document):
 					"party_type": self.party_type,
 					"party": self.party,
 					"is_company_account": self.is_company_account,
+					"company": self.company,
 					"is_default": 1,
 					"disabled": 0,
 				},

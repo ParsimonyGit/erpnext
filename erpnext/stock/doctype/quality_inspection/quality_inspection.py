@@ -6,7 +6,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 from frappe.model.mapper import get_mapped_doc
-from frappe.utils import cint, cstr, flt, get_number_format_info
+from frappe.utils import cint, cstr, flt, get_link_to_form, get_number_format_info
 
 from erpnext.stock.doctype.quality_inspection_template.quality_inspection_template import (
 	get_template_details,
@@ -29,12 +29,15 @@ class QualityInspection(Document):
 		amended_from: DF.Link | None
 		batch_no: DF.Link | None
 		bom_no: DF.Link | None
+		child_row_reference: DF.Data | None
+		company: DF.Link | None
 		description: DF.SmallText | None
 		inspected_by: DF.Link
 		inspection_type: DF.Literal["", "Incoming", "Outgoing", "In Process"]
 		item_code: DF.Link
 		item_name: DF.Data | None
 		item_serial_no: DF.Link | None
+		letter_head: DF.Link | None
 		manual_inspection: DF.Check
 		naming_series: DF.Literal["MAT-QA-.YYYY.-"]
 		quality_inspection_template: DF.Link | None
@@ -73,6 +76,71 @@ class QualityInspection(Document):
 		if self.readings:
 			self.inspect_and_set_status()
 
+		self.validate_inspection_required()
+		self.set_child_row_reference()
+		self.set_company()
+
+	def set_company(self):
+		if self.reference_type and self.reference_name:
+			company = frappe.get_cached_value(self.reference_type, self.reference_name, "company")
+			if company != self.company:
+				self.company = company
+
+	def set_child_row_reference(self):
+		if self.child_row_reference:
+			return
+
+		if not (self.reference_type and self.reference_name):
+			return
+
+		doctype = self.reference_type + " Item"
+		if self.reference_type == "Stock Entry":
+			doctype = "Stock Entry Detail"
+
+		child_doc = frappe.qb.DocType(doctype)
+		qi_doc = frappe.qb.DocType("Quality Inspection")
+
+		child_row_references = (
+			frappe.qb.from_(child_doc)
+			.left_join(qi_doc)
+			.on(child_doc.name == qi_doc.child_row_reference)
+			.select(child_doc.name)
+			.where(
+				(child_doc.item_code == self.item_code)
+				& (child_doc.parent == self.reference_name)
+				& (child_doc.docstatus < 2)
+				& (qi_doc.name.isnull())
+			)
+			.orderby(child_doc.idx)
+		).run(pluck=True)
+
+		if len(child_row_references):
+			self.child_row_reference = child_row_references[0]
+
+	def validate_inspection_required(self):
+		if frappe.db.get_single_value(
+			"Stock Settings", "allow_to_make_quality_inspection_after_purchase_or_delivery"
+		):
+			return
+
+		if self.reference_type in ["Purchase Receipt", "Purchase Invoice"] and not frappe.get_cached_value(
+			"Item", self.item_code, "inspection_required_before_purchase"
+		):
+			frappe.throw(
+				_(
+					"'Inspection Required before Purchase' has disabled for the item {0}, no need to create the QI"
+				).format(get_link_to_form("Item", self.item_code))
+			)
+
+		if self.reference_type in ["Delivery Note", "Sales Invoice"] and not frappe.get_cached_value(
+			"Item", self.item_code, "inspection_required_before_delivery"
+		):
+			frappe.throw(
+				_(
+					"'Inspection Required before Delivery' has disabled for the item {0}, no need to create the QI"
+				).format(get_link_to_form("Item", self.item_code))
+			)
+
 	def before_submit(self):
 		self.validate_readings_status_mandatory()
 
@@ -92,6 +160,9 @@ class QualityInspection(Document):
 			child = self.append("readings", {})
 			child.update(d)
 			child.status = "Accepted"
+			child.parameter_group = frappe.get_value(
+				"Quality Inspection Parameter", d.specification, "parameter_group"
+			)
 
 	@frappe.whitelist()
 	def get_quality_inspection_template(self):
@@ -105,8 +176,20 @@ class QualityInspection(Document):
 		self.quality_inspection_template = template
 		self.get_item_specification_details()
 
+	def on_update(self):
+		action_if_qi_in_draft = frappe.db.get_single_value(
+			"Stock Settings", "action_if_quality_inspection_is_not_submitted"
+		)
+
+		if not action_if_qi_in_draft or action_if_qi_in_draft == "Warn":
+			self.update_qc_reference()
+
 	def on_submit(self):
-		self.update_qc_reference()
+		if (
+			frappe.db.get_single_value("Stock Settings", "action_if_quality_inspection_is_not_submitted")
+			== "Stop"
+		):
+			self.update_qc_reference()
 
 	def on_cancel(self):
 		self.ignore_linked_doctypes = "Serial and Batch Bundle"
@@ -114,15 +197,15 @@ class QualityInspection(Document):
 		self.update_qc_reference()
 
 	def on_trash(self):
-		self.update_qc_reference()
+		self.update_qc_reference(remove_reference=True)
 
 	def validate_readings_status_mandatory(self):
 		for reading in self.readings:
 			if not reading.status:
 				frappe.throw(_("Row #{0}: Status is mandatory").format(reading.idx))
 
-	def update_qc_reference(self):
-		quality_inspection = self.name if self.docstatus == 1 else ""
+	def update_qc_reference(self, remove_reference=False):
+		quality_inspection = self.name if self.docstatus < 2 and not remove_reference else ""
 
 		if self.reference_type == "Job Card":
 			if self.reference_name:
@@ -136,35 +219,38 @@ class QualityInspection(Document):
 				)
 
 		else:
-			args = [quality_inspection, self.modified, self.reference_name, self.item_code]
 			doctype = self.reference_type + " Item"
 
 			if self.reference_type == "Stock Entry":
 				doctype = "Stock Entry Detail"
 
-			if self.reference_type and self.reference_name:
-				conditions = ""
-				if self.batch_no and self.docstatus == 1:
-					conditions += " and t1.batch_no = %s"
-					args.append(self.batch_no)
+			if doctype and self.reference_name:
+				child_doc = frappe.qb.DocType(doctype)
+
+				query = (
+					frappe.qb.update(child_doc)
+					.set(child_doc.quality_inspection, quality_inspection)
+					.where(
+						(child_doc.parent == self.reference_name) & (child_doc.item_code == self.item_code)
+					)
+				)
+
+				if self.batch_no and self.docstatus < 2:
+					query = query.where(child_doc.batch_no == self.batch_no)
 
 				if self.docstatus == 2:  # if cancel, then remove qi link wherever same name
-					conditions += " and t1.quality_inspection = %s"
-					args.append(self.name)
+					query = query.where(child_doc.quality_inspection == self.name)
 
-				frappe.db.sql(
-					f"""
-					UPDATE
-						`tab{doctype}` t1, `tab{self.reference_type}` t2
-					SET
-						t1.quality_inspection = %s, t2.modified = %s
-					WHERE
-						t1.parent = %s
-						and t1.item_code = %s
-						and t1.parent = t2.name
-						{conditions}
-				""",
-					args,
+				if self.child_row_reference:
+					query = query.where(child_doc.name == self.child_row_reference)
+
+				query.run()
+
+				frappe.db.set_value(
+					self.reference_type,
+					self.reference_name,
+					"modified",
+					self.modified,
 				)
 
 	def inspect_and_set_status(self):
@@ -301,7 +387,7 @@ def item_query(doctype, txt, searchfield, start, page_len, filters):
 
 		return frappe.db.sql(
 			f"""
-				SELECT item_code
+				SELECT distinct item_code, item_name
 				FROM `tab{from_doctype}`
 				WHERE parent=%(parent)s and docstatus < 2 and item_code like %(txt)s
 				{qi_condition} {cond} {mcond}
@@ -332,10 +418,11 @@ def quality_inspection_query(doctype, txt, searchfield, start, page_len, filters
 		limit_start=start,
 		limit_page_length=page_len,
 		filters={
-			"docstatus": 1,
+			"docstatus": ("<", 2),
 			"name": ("like", "%%%s%%" % txt),
 			"item_code": filters.get("item_code"),
 			"reference_name": ("in", [filters.get("reference_name", ""), ""]),
+			"child_row_reference": ("in", [filters.get("child_row_reference", ""), ""]),
 		},
 		as_list=1,
 	)

@@ -10,6 +10,10 @@ import erpnext
 from erpnext.accounts.utils import get_account_currency
 from erpnext.buying.utils import check_on_hold_or_closed_status
 from erpnext.controllers.subcontracting_controller import SubcontractingController
+from erpnext.setup.doctype.brand.brand import get_brand_defaults
+from erpnext.setup.doctype.item_group.item_group import get_item_group_defaults
+from erpnext.stock.doctype.item.item import get_item_defaults
+from erpnext.stock.get_item_details import get_default_cost_center, get_default_expense_account
 from erpnext.stock.stock_ledger import get_valuation_rate
 
 
@@ -112,7 +116,13 @@ class SubcontractingReceipt(SubcontractingController):
 		self.validate_items_qty()
 		self.set_items_bom()
 		self.set_items_cost_center()
-		self.set_items_expense_account()
+
+		if self.company:
+			default_expense_account = self.get_company_default(
+				"default_expense_account", ignore_validation=True
+			)
+			self.set_service_expense_account(default_expense_account)
+			self.set_expense_account_for_subcontracted_items(default_expense_account)
 
 	def validate(self):
 		self.reset_supplied_items()
@@ -140,12 +150,15 @@ class SubcontractingReceipt(SubcontractingController):
 		self.reset_default_field_value("rejected_warehouse", "items", "rejected_warehouse")
 		self.get_current_stock()
 
+		self.set_supplied_items_expense_account()
+		self.set_supplied_items_cost_center()
+
 	def on_submit(self):
 		self.validate_closed_subcontracting_order()
 		self.validate_available_qty_for_consumption()
 		self.update_status_updater_args()
 		self.update_prevdoc_status()
-		self.set_subcontracting_order_status()
+		self.set_subcontracting_order_status(update_bin=False)
 		self.set_consumed_qty_in_subcontract_order()
 
 		for table_name in ["items", "supplied_items"]:
@@ -172,7 +185,7 @@ class SubcontractingReceipt(SubcontractingController):
 		self.update_status_updater_args()
 		self.update_prevdoc_status()
 		self.set_consumed_qty_in_subcontract_order()
-		self.set_subcontracting_order_status()
+		self.set_subcontracting_order_status(update_bin=False)
 		self.update_stock_ledger()
 		self.make_gl_entries_on_cancel()
 		self.repost_future_sle_and_gle()
@@ -182,12 +195,46 @@ class SubcontractingReceipt(SubcontractingController):
 	@frappe.whitelist()
 	def reset_raw_materials(self):
 		self.supplied_items = []
+		self.flags.reset_raw_materials = True
 		self.create_raw_materials_supplied()
 
 	def validate_closed_subcontracting_order(self):
 		for item in self.items:
 			if item.subcontracting_order:
 				check_on_hold_or_closed_status("Subcontracting Order", item.subcontracting_order)
+
+	def set_service_expense_account(self, default_expense_account):
+		for row in self.get("items"):
+			if not row.service_expense_account and row.purchase_order_item:
+				service_item = frappe.db.get_value(
+					"Purchase Order Item", row.purchase_order_item, "item_code"
+				)
+
+				if service_item:
+					if default := (
+						get_item_defaults(service_item, self.company)
+						or get_item_group_defaults(service_item, self.company)
+						or get_brand_defaults(service_item, self.company)
+					):
+						if service_expense_account := default.get("expense_account"):
+							row.service_expense_account = service_expense_account
+
+			if not row.service_expense_account:
+				row.service_expense_account = default_expense_account
+
+	def set_expense_account_for_subcontracted_items(self, default_expense_account):
+		for row in self.get("items"):
+			if not row.expense_account:
+				if default := (
+					get_item_defaults(row.item_code, self.company)
+					or get_item_group_defaults(row.item_code, self.company)
+					or get_brand_defaults(row.item_code, self.company)
+				):
+					if expense_account := default.get("expense_account"):
+						row.expense_account = expense_account
+
+			if not row.expense_account:
+				row.expense_account = default_expense_account
 
 	def validate_items_qty(self):
 		for item in self.items:
@@ -224,22 +271,46 @@ class SubcontractingReceipt(SubcontractingController):
 				if not item.cost_center:
 					item.cost_center = cost_center
 
-	def set_items_expense_account(self):
-		if self.company:
-			expense_account = self.get_company_default("default_expense_account", ignore_validation=True)
+	def set_supplied_items_cost_center(self):
+		for item in self.supplied_items:
+			if not item.cost_center:
+				item.cost_center = get_default_cost_center(
+					{"project": self.project},
+					get_item_defaults(item.rm_item_code, self.company),
+					get_item_group_defaults(item.rm_item_code, self.company),
+					get_brand_defaults(item.rm_item_code, self.company),
+					self.company,
+				)
 
-			for item in self.items:
-				if not item.expense_account:
-					item.expense_account = expense_account
+	def set_supplied_items_expense_account(self):
+		for item in self.supplied_items:
+			if not item.expense_account:
+				item.expense_account = get_default_expense_account(
+					frappe._dict(
+						{
+							"expense_account": self.get_company_default(
+								"default_expense_account", ignore_validation=True
+							)
+						}
+					),
+					get_item_defaults(item.rm_item_code, self.company),
+					get_item_group_defaults(item.rm_item_code, self.company),
+					get_brand_defaults(item.rm_item_code, self.company),
+				)
 
 	def reset_supplied_items(self):
 		if (
 			frappe.db.get_single_value("Buying Settings", "backflush_raw_materials_of_subcontract_based_on")
 			== "BOM"
 			and self.supplied_items
-			and not any(item.serial_and_batch_bundle for item in self.supplied_items)
 		):
-			self.supplied_items = []
+			if not any(
+				item.serial_and_batch_bundle or item.batch_no or item.serial_no
+				for item in self.supplied_items
+			):
+				self.supplied_items = []
+			else:
+				self.update_rate_for_supplied_items()
 
 	@frappe.whitelist()
 	def get_scrap_items(self, recalculate_rate=False):
@@ -326,9 +397,12 @@ class SubcontractingReceipt(SubcontractingController):
 				supplied_items_details[item.name] = {}
 
 				for supplied_item in supplied_items:
+					if supplied_item.rm_item_code not in supplied_items_details[item.name]:
+						supplied_items_details[item.name][supplied_item.rm_item_code] = 0.0
+
 					supplied_items_details[item.name][
 						supplied_item.rm_item_code
-					] = supplied_item.available_qty
+					] += supplied_item.available_qty
 		else:
 			for item in self.get("supplied_items"):
 				item.available_qty_for_consumption = supplied_items_details.get(item.reference_name, {}).get(
@@ -506,10 +580,22 @@ class SubcontractingReceipt(SubcontractingController):
 		gl_entries = []
 		self.make_item_gl_entries(gl_entries, warehouse_account)
 
-		return process_gl_map(gl_entries)
+		return process_gl_map(gl_entries, from_repost=frappe.flags.through_repost_item_valuation)
 
 	def make_item_gl_entries(self, gl_entries, warehouse_account=None):
 		warehouse_with_no_account = []
+
+		supplied_items_details = frappe._dict()
+		for item in self.supplied_items:
+			supplied_items_details.setdefault(item.reference_name, []).append(
+				frappe._dict(
+					{
+						"amount": item.amount,
+						"expense_account": item.expense_account,
+						"cost_center": item.cost_center,
+					}
+				)
+			)
 
 		for item in self.items:
 			if flt(item.rate) and flt(item.qty):
@@ -545,13 +631,17 @@ class SubcontractingReceipt(SubcontractingController):
 						project=item.project,
 						item=item,
 					)
+
+					service_cost = flt(
+						item.service_cost_per_qty, item.precision("service_cost_per_qty")
+					) * flt(item.qty, item.precision("qty"))
 					# Expense Account (Credit)
 					self.add_gl_entry(
 						gl_entries=gl_entries,
 						account=item.expense_account,
 						cost_center=item.cost_center,
 						debit=0.0,
-						credit=stock_value_diff,
+						credit=flt(stock_value_diff) - service_cost,
 						remarks=remarks,
 						against_account=accepted_warehouse_account,
 						account_currency=get_account_currency(item.expense_account),
@@ -559,33 +649,49 @@ class SubcontractingReceipt(SubcontractingController):
 						item=item,
 					)
 
+					service_account = item.service_expense_account or item.expense_account
+					# Expense Account (Credit)
+					self.add_gl_entry(
+						gl_entries=gl_entries,
+						account=service_account,
+						cost_center=item.cost_center,
+						debit=0.0,
+						credit=service_cost,
+						remarks=remarks,
+						against_account=accepted_warehouse_account,
+						account_currency=get_account_currency(service_account),
+						project=item.project,
+						item=item,
+					)
+
 					if flt(item.rm_supp_cost) and supplier_warehouse_account:
-						# Supplier Warehouse Account (Credit)
-						self.add_gl_entry(
-							gl_entries=gl_entries,
-							account=supplier_warehouse_account,
-							cost_center=item.cost_center,
-							debit=0.0,
-							credit=flt(item.rm_supp_cost),
-							remarks=remarks,
-							against_account=item.expense_account,
-							account_currency=get_account_currency(supplier_warehouse_account),
-							project=item.project,
-							item=item,
-						)
-						# Expense Account (Debit)
-						self.add_gl_entry(
-							gl_entries=gl_entries,
-							account=item.expense_account,
-							cost_center=item.cost_center,
-							debit=flt(item.rm_supp_cost),
-							credit=0.0,
-							remarks=remarks,
-							against_account=supplier_warehouse_account,
-							account_currency=get_account_currency(item.expense_account),
-							project=item.project,
-							item=item,
-						)
+						for rm_item in supplied_items_details.get(item.name):
+							# Supplier Warehouse Account (Credit)
+							self.add_gl_entry(
+								gl_entries=gl_entries,
+								account=supplier_warehouse_account,
+								cost_center=rm_item.cost_center or item.cost_center,
+								debit=0.0,
+								credit=flt(rm_item.amount),
+								remarks=remarks,
+								against_account=rm_item.expense_account or item.expense_account,
+								account_currency=get_account_currency(supplier_warehouse_account),
+								project=item.project,
+								item=item,
+							)
+							# Expense Account (Debit)
+							self.add_gl_entry(
+								gl_entries=gl_entries,
+								account=rm_item.expense_account or item.expense_account,
+								cost_center=rm_item.cost_center or item.cost_center,
+								debit=flt(rm_item.amount),
+								credit=0.0,
+								remarks=remarks,
+								against_account=supplier_warehouse_account,
+								account_currency=get_account_currency(item.expense_account),
+								project=item.project,
+								item=item,
+							)
 
 					# Expense Account (Debit)
 					if item.additional_cost_per_qty:
@@ -682,86 +788,136 @@ def make_purchase_receipt(source_name, target_doc=None, save=False, submit=False
 	else:
 		source_doc = source_name
 
-	if not source_doc.is_return:
-		if not target_doc:
-			target_doc = frappe.new_doc("Purchase Receipt")
-			target_doc.is_subcontracted = 1
-			target_doc.is_old_subcontracting_flow = 0
+	if source_doc.is_return:
+		return
 
-		target_doc = get_mapped_doc(
-			"Subcontracting Receipt",
-			source_doc.name,
-			{
-				"Subcontracting Receipt": {
-					"doctype": "Purchase Receipt",
-					"field_map": {
-						"posting_date": "posting_date",
-						"posting_time": "posting_time",
-						"name": "subcontracting_receipt",
-						"supplier_warehouse": "supplier_warehouse",
-					},
-					"field_no_map": ["total_qty", "total"],
-				},
-			},
-			target_doc,
-			ignore_child_tables=True,
+	po_sr_item_dict = {}
+	po_name = None
+	for item in source_doc.items:
+		if not item.purchase_order:
+			continue
+
+		if not po_name:
+			po_name = item.purchase_order
+
+		po_sr_item_dict[item.purchase_order_item] = {
+			"qty": flt(item.qty),
+			"rejected_qty": flt(item.rejected_qty),
+			"warehouse": item.warehouse,
+			"rejected_warehouse": item.rejected_warehouse,
+			"subcontracting_receipt_item": item.name,
+		}
+
+	if not po_name:
+		frappe.throw(
+			_("Purchase Order Item reference is missing in Subcontracting Receipt {0}").format(
+				source_doc.name
+			)
 		)
 
-		target_doc.currency = frappe.get_cached_value("Company", target_doc.company, "default_currency")
+	def update_item(obj, target, source_parent):
+		sr_item_details = po_sr_item_dict.get(obj.name)
+		ratio = flt(obj.qty) / flt(obj.fg_item_qty)
 
-		po_items_details = {}
-		for item in source_doc.items:
-			if item.purchase_order and item.purchase_order_item:
-				if item.purchase_order not in po_items_details:
-					po_doc = frappe.get_doc("Purchase Order", item.purchase_order)
-					po_items_details[item.purchase_order] = {
-						po_item.name: po_item for po_item in po_doc.items
-					}
+		target.update(
+			{
+				"qty": ratio * sr_item_details["qty"],
+				"rejected_qty": ratio * sr_item_details["rejected_qty"],
+				"warehouse": sr_item_details["warehouse"],
+				"rejected_warehouse": sr_item_details["rejected_warehouse"],
+				"subcontracting_receipt_item": sr_item_details["subcontracting_receipt_item"],
+			}
+		)
 
-				if po_item := po_items_details[item.purchase_order].get(item.purchase_order_item):
-					conversion_factor = flt(po_item.qty) / flt(po_item.fg_item_qty)
-					item_row = {
-						"item_code": po_item.item_code,
-						"item_name": po_item.item_name,
-						"conversion_factor": conversion_factor,
-						"qty": flt(item.qty) * conversion_factor,
-						"rejected_qty": flt(item.rejected_qty) * conversion_factor,
-						"uom": po_item.uom,
-						"rate": po_item.rate,
-						"warehouse": item.warehouse,
-						"rejected_warehouse": item.rejected_warehouse,
-						"purchase_order": item.purchase_order,
-						"purchase_order_item": item.purchase_order_item,
-						"subcontracting_receipt_item": item.name,
-						"project": po_item.project,
-					}
-					target_doc.append("items", item_row)
+	def post_process(source, target):
+		target.set_missing_values()
+		target.update(
+			{
+				"posting_date": source_doc.posting_date,
+				"posting_time": source_doc.posting_time,
+				"subcontracting_receipt": source_doc.name,
+				"supplier_warehouse": source_doc.supplier_warehouse,
+				"is_subcontracted": 1,
+				"is_old_subcontracting_flow": 0,
+				"currency": frappe.get_cached_value("Company", target.company, "default_currency"),
+			}
+		)
 
-		if not target_doc.items:
-			frappe.throw(
-				_("Purchase Order Item reference is missing in Subcontracting Receipt {0}").format(
-					source_doc.name
-				)
+	target_doc = get_mapped_doc(
+		"Purchase Order",
+		po_name,
+		{
+			"Purchase Order": {
+				"doctype": "Purchase Receipt",
+				"field_map": {"supplier_warehouse": "supplier_warehouse"},
+				"validation": {
+					"docstatus": ["=", 1],
+				},
+			},
+			"Purchase Order Item": {
+				"doctype": "Purchase Receipt Item",
+				"field_map": {
+					"name": "purchase_order_item",
+					"parent": "purchase_order",
+					"bom": "bom",
+				},
+				"postprocess": update_item,
+				"condition": lambda doc: doc.name in po_sr_item_dict,
+			},
+			"Purchase Taxes and Charges": {
+				"doctype": "Purchase Taxes and Charges",
+				"reset_value": True,
+				"condition": lambda doc: not doc.is_tax_withholding_account,
+			},
+		},
+		postprocess=post_process,
+	)
+
+	if not target_doc.get("items"):
+		add_po_items_to_pr(source_doc, target_doc)
+
+	if (save or submit) and frappe.has_permission(target_doc.doctype, "create"):
+		target_doc.save()
+
+		if submit and frappe.has_permission(target_doc.doctype, "submit", target_doc):
+			try:
+				target_doc.submit()
+			except Exception as e:
+				target_doc.add_comment("Comment", _("Submit Action Failed") + "<br><br>" + str(e))
+
+		if notify:
+			frappe.msgprint(
+				_("Purchase Receipt {0} created.").format(
+					get_link_to_form(target_doc.doctype, target_doc.name)
+				),
+				indicator="green",
+				alert=True,
 			)
 
-		target_doc.set_missing_values()
+	return target_doc
 
-		if (save or submit) and frappe.has_permission(target_doc.doctype, "create"):
-			target_doc.save()
 
-			if submit and frappe.has_permission(target_doc.doctype, "submit", target_doc):
-				try:
-					target_doc.submit()
-				except Exception as e:
-					target_doc.add_comment("Comment", _("Submit Action Failed") + "<br><br>" + str(e))
+def add_po_items_to_pr(scr_doc, target_doc):
+	fg_items = {(item.item_code, item.purchase_order): item.qty for item in scr_doc.items}
 
-			if notify:
-				frappe.msgprint(
-					_("Purchase Receipt {0} created.").format(
-						get_link_to_form(target_doc.doctype, target_doc.name)
-					),
-					indicator="green",
-					alert=True,
+	for (item_code, po_name), fg_qty in fg_items.items():
+		po_doc = frappe.get_doc("Purchase Order", po_name)
+		for item in po_doc.items:
+			if item.fg_item != item_code:
+				continue
+
+			qty = (item.stock_qty - item.received_qty) * fg_qty / item.fg_item_qty
+			if qty:
+				target_doc.append(
+					"items",
+					{
+						"item_code": item.item_code,
+						"item_name": item.item_name,
+						"description": item.description,
+						"qty": qty,
+						"rate": item.rate,
+						"warehouse": item.warehouse,
+						"purchase_order": item.parent,
+						"purchase_order_item": item.name,
+					},
 				)
-
-		return target_doc

@@ -261,12 +261,11 @@ def sales_invoice_validate(doc):
 
 	doc.company_tax_id = frappe.get_cached_value("Company", doc.company, "tax_id")
 	doc.company_fiscal_code = frappe.get_cached_value("Company", doc.company, "fiscal_code")
-	if not doc.company_tax_id and not doc.company_fiscal_code:
+	if not doc.company_tax_id or not doc.company_fiscal_code:
 		frappe.throw(
-			_("Please set either the Tax ID or Fiscal Code on Company '%s'" % doc.company),
+			_("Please set both the Tax ID and Fiscal Code on Company {0}").format(doc.company),
 			title=_("E-Invoicing Information Missing"),
 		)
-
 	# Validate customer details
 	customer = frappe.get_doc("Customer", doc.customer)
 
@@ -331,22 +330,19 @@ def sales_invoice_on_submit(doc, method):
 	]:
 		return
 
-	if not len(doc.payment_schedule):
-		frappe.throw(_("Please set the Payment Schedule"), title=_("E-Invoicing Information Missing"))
-	else:
-		for schedule in doc.payment_schedule:
-			if not schedule.mode_of_payment:
-				frappe.throw(
-					_("Row {0}: Please set the Mode of Payment in Payment Schedule").format(schedule.idx),
-					title=_("E-Invoicing Information Missing"),
-				)
-			elif not frappe.db.get_value("Mode of Payment", schedule.mode_of_payment, "mode_of_payment_code"):
-				frappe.throw(
-					_("Row {0}: Please set the correct code on Mode of Payment {1}").format(
-						schedule.idx, schedule.mode_of_payment
-					),
-					title=_("E-Invoicing Information Missing"),
-				)
+	for schedule in doc.payment_schedule:
+		if not schedule.mode_of_payment:
+			frappe.throw(
+				_("Row {0}: Please set the Mode of Payment in Payment Schedule").format(schedule.idx),
+				title=_("E-Invoicing Information Missing"),
+			)
+		elif not frappe.db.get_value("Mode of Payment", schedule.mode_of_payment, "mode_of_payment_code"):
+			frappe.throw(
+				_("Row {0}: Please set the correct code on Mode of Payment {1}").format(
+					schedule.idx, schedule.mode_of_payment
+				),
+				title=_("E-Invoicing Information Missing"),
+			)
 
 	prepare_and_attach_invoice(doc)
 

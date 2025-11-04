@@ -8,10 +8,13 @@ import frappe
 from frappe import qb
 from frappe.model.dynamic_links import get_dynamic_link_map
 from frappe.tests.utils import FrappeTestCase, change_settings
-from frappe.utils import add_days, flt, format_date, getdate, nowdate, today
+from frappe.utils import add_days, cint, flt, format_date, getdate, nowdate, today
 
 import erpnext
 from erpnext.accounts.doctype.account.test_account import create_account, get_inventory_account
+from erpnext.accounts.doctype.mode_of_payment.test_mode_of_payment import (
+	set_default_account_for_mode_of_payment,
+)
 from erpnext.accounts.doctype.pos_profile.test_pos_profile import make_pos_profile
 from erpnext.accounts.doctype.purchase_invoice.purchase_invoice import WarehouseMissingError
 from erpnext.accounts.doctype.purchase_invoice.test_purchase_invoice import (
@@ -24,7 +27,7 @@ from erpnext.assets.doctype.asset.test_asset import create_asset, create_asset_d
 from erpnext.assets.doctype.asset_depreciation_schedule.asset_depreciation_schedule import (
 	get_depr_schedule,
 )
-from erpnext.controllers.accounts_controller import update_invoice_status
+from erpnext.controllers.accounts_controller import InvalidQtyError, update_invoice_status
 from erpnext.controllers.taxes_and_totals import get_itemised_tax_breakup_data
 from erpnext.exceptions import InvalidAccountCurrency, InvalidCurrency
 from erpnext.selling.doctype.customer.test_customer import get_customer_dict
@@ -43,6 +46,7 @@ from erpnext.stock.doctype.stock_entry.test_stock_entry import (
 from erpnext.stock.doctype.stock_reconciliation.test_stock_reconciliation import (
 	create_stock_reconciliation,
 )
+from erpnext.stock.get_item_details import get_item_tax_map
 from erpnext.stock.utils import get_incoming_rate, get_stock_balance
 
 
@@ -53,7 +57,32 @@ class TestSalesInvoice(FrappeTestCase):
 		create_items(["_Test Internal Transfer Item"], uoms=[{"uom": "Box", "conversion_factor": 10}])
 		create_internal_parties()
 		setup_accounts()
+		mode_of_payment = frappe.get_doc("Mode of Payment", "Bank Draft")
+		set_default_account_for_mode_of_payment(mode_of_payment, "_Test Company", "_Test Bank - _TC")
+		set_default_account_for_mode_of_payment(
+			mode_of_payment, "_Test Company with perpetual inventory", "_Test Bank - TCP1"
+		)
 		frappe.db.set_single_value("Accounts Settings", "acc_frozen_upto", None)
+
+	@change_settings(
+		"Accounts Settings",
+		{"maintain_same_internal_transaction_rate": 1, "maintain_same_rate_action": "Stop"},
+	)
+	def test_invalid_rate_without_override(self):
+		from frappe import ValidationError
+
+		from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_inter_company_purchase_invoice
+
+		si = create_sales_invoice(
+			customer="_Test Internal Customer 3", company="_Test Company", is_internal_customer=1, rate=100
+		)
+		pi = make_inter_company_purchase_invoice(si.name)
+		pi.items[0].rate = 120
+
+		with self.assertRaises(ValidationError) as e:
+			pi.insert()
+			pi.submit()
+		self.assertIn("Rate must be same", str(e.exception))
 
 	def tearDown(self):
 		frappe.db.rollback()
@@ -72,6 +101,16 @@ class TestSalesInvoice(FrappeTestCase):
 	@classmethod
 	def tearDownClass(self):
 		unlink_payment_on_cancel_of_invoice(0)
+
+	def test_sales_invoice_qty(self):
+		si = create_sales_invoice(qty=0, do_not_save=True)
+		with self.assertRaises(InvalidQtyError):
+			si.save()
+
+		# No error with qty=1
+		si.items[0].qty = 1
+		si.save()
+		self.assertEqual(si.items[0].qty, 1)
 
 	def test_timestamp_change(self):
 		w = frappe.copy_doc(test_records[0])
@@ -314,7 +353,8 @@ class TestSalesInvoice(FrappeTestCase):
 		si.insert()
 
 		# with inclusive tax
-		self.assertEqual(si.items[0].net_amount, 3947.368421052631)
+		self.assertEqual(si.items[0].net_amount, 3947.37)
+		self.assertEqual(si.net_total, si.base_net_total)
 		self.assertEqual(si.net_total, 3947.37)
 		self.assertEqual(si.grand_total, 5000)
 
@@ -658,7 +698,7 @@ class TestSalesInvoice(FrappeTestCase):
 				62.5,
 				625.0,
 				50,
-				499.97600115194473,
+				499.98,
 			],
 			"_Test Item Home Desktop 200": [
 				190.66,
@@ -669,7 +709,7 @@ class TestSalesInvoice(FrappeTestCase):
 				190.66,
 				953.3,
 				150,
-				749.9968530500239,
+				750,
 			],
 		}
 
@@ -682,20 +722,21 @@ class TestSalesInvoice(FrappeTestCase):
 				self.assertEqual(d.get(k), expected_values[d.item_code][i])
 
 		# check net total
-		self.assertEqual(si.net_total, 1249.97)
+		self.assertEqual(si.base_net_total, si.net_total)
+		self.assertEqual(si.net_total, 1249.98)
 		self.assertEqual(si.total, 1578.3)
 
 		# check tax calculation
 		expected_values = {
 			"keys": ["tax_amount", "total"],
-			"_Test Account Excise Duty - _TC": [140, 1389.97],
-			"_Test Account Education Cess - _TC": [2.8, 1392.77],
-			"_Test Account S&H Education Cess - _TC": [1.4, 1394.17],
-			"_Test Account CST - _TC": [27.88, 1422.05],
-			"_Test Account VAT - _TC": [156.25, 1578.30],
-			"_Test Account Customs Duty - _TC": [125, 1703.30],
-			"_Test Account Shipping Charges - _TC": [100, 1803.30],
-			"_Test Account Discount - _TC": [-180.33, 1622.97],
+			"_Test Account Excise Duty - _TC": [140, 1389.98],
+			"_Test Account Education Cess - _TC": [2.8, 1392.78],
+			"_Test Account S&H Education Cess - _TC": [1.4, 1394.18],
+			"_Test Account CST - _TC": [27.88, 1422.06],
+			"_Test Account VAT - _TC": [156.25, 1578.31],
+			"_Test Account Customs Duty - _TC": [125, 1703.31],
+			"_Test Account Shipping Charges - _TC": [100, 1803.31],
+			"_Test Account Discount - _TC": [-180.33, 1622.98],
 		}
 
 		for d in si.get("taxes"):
@@ -731,7 +772,7 @@ class TestSalesInvoice(FrappeTestCase):
 				"base_rate": 2500,
 				"base_amount": 25000,
 				"net_rate": 40,
-				"net_amount": 399.9808009215558,
+				"net_amount": 399.98,
 				"base_net_rate": 2000,
 				"base_net_amount": 19999,
 			},
@@ -745,7 +786,7 @@ class TestSalesInvoice(FrappeTestCase):
 				"base_rate": 7500,
 				"base_amount": 37500,
 				"net_rate": 118.01,
-				"net_amount": 590.0531205155963,
+				"net_amount": 590.05,
 				"base_net_rate": 5900.5,
 				"base_net_amount": 29502.5,
 			},
@@ -783,13 +824,22 @@ class TestSalesInvoice(FrappeTestCase):
 
 		self.assertEqual(si.base_grand_total, 60795)
 		self.assertEqual(si.grand_total, 1215.90)
-		self.assertEqual(si.rounding_adjustment, 0.01)
-		self.assertEqual(si.base_rounding_adjustment, 0.50)
+		# no rounding adjustment as the Smallest Currency Fraction Value of USD is 0.01
+		if frappe.db.get_value("Currency", "USD", "smallest_currency_fraction_value") < 0.01:
+			self.assertEqual(si.rounding_adjustment, 0.10)
+			self.assertEqual(si.base_rounding_adjustment, 5.0)
+		else:
+			self.assertEqual(si.rounding_adjustment, 0.0)
+			self.assertEqual(si.base_rounding_adjustment, 0.0)
 
 	def test_outstanding(self):
 		w = self.make()
 		self.assertEqual(w.outstanding_amount, w.base_rounded_total)
 
+	@change_settings(
+		"Accounts Settings",
+		{"add_taxes_from_item_tax_template": 0, "add_taxes_from_taxes_and_charges_template": 0},
+	)
 	def test_rounded_total_with_cash_discount(self):
 		si = frappe.copy_doc(test_records[2])
 
@@ -956,10 +1006,8 @@ class TestSalesInvoice(FrappeTestCase):
 		pos.is_pos = 1
 		pos.update_stock = 1
 
-		pos.append(
-			"payments", {"mode_of_payment": "Bank Draft", "account": "_Test Bank - TCP1", "amount": 50}
-		)
-		pos.append("payments", {"mode_of_payment": "Cash", "account": "Cash - TCP1", "amount": 50})
+		pos.append("payments", {"mode_of_payment": "Bank Draft", "amount": 50})
+		pos.append("payments", {"mode_of_payment": "Cash", "amount": 50})
 
 		taxes = get_taxes_and_charges()
 		pos.taxes = []
@@ -988,10 +1036,8 @@ class TestSalesInvoice(FrappeTestCase):
 		pos.is_pos = 1
 		pos.pos_profile = pos_profile.name
 
-		pos.append(
-			"payments", {"mode_of_payment": "Bank Draft", "account": "_Test Bank - _TC", "amount": 500}
-		)
-		pos.append("payments", {"mode_of_payment": "Cash", "account": "Cash - _TC", "amount": 500})
+		pos.append("payments", {"mode_of_payment": "Bank Draft", "amount": 500})
+		pos.append("payments", {"mode_of_payment": "Cash", "amount": 500})
 		pos.insert()
 		pos.submit()
 
@@ -1034,10 +1080,8 @@ class TestSalesInvoice(FrappeTestCase):
 		pos.is_pos = 1
 		pos.update_stock = 1
 
-		pos.append(
-			"payments", {"mode_of_payment": "Bank Draft", "account": "_Test Bank - TCP1", "amount": 50}
-		)
-		pos.append("payments", {"mode_of_payment": "Cash", "account": "Cash - TCP1", "amount": 60})
+		pos.append("payments", {"mode_of_payment": "Bank Draft", "amount": 50})
+		pos.append("payments", {"mode_of_payment": "Cash", "amount": 60})
 
 		pos.write_off_outstanding_amount_automatically = 1
 		pos.insert()
@@ -1077,10 +1121,8 @@ class TestSalesInvoice(FrappeTestCase):
 		pos.is_pos = 1
 		pos.update_stock = 1
 
-		pos.append(
-			"payments", {"mode_of_payment": "Bank Draft", "account": "_Test Bank - TCP1", "amount": 50}
-		)
-		pos.append("payments", {"mode_of_payment": "Cash", "account": "Cash - TCP1", "amount": 40})
+		pos.append("payments", {"mode_of_payment": "Bank Draft", "amount": 50})
+		pos.append("payments", {"mode_of_payment": "Cash", "amount": 40})
 
 		pos.write_off_outstanding_amount_automatically = 1
 		pos.insert()
@@ -1094,7 +1136,7 @@ class TestSalesInvoice(FrappeTestCase):
 
 		pos = create_sales_invoice(do_not_save=True)
 		pos.is_pos = 1
-		pos.append("payments", {"mode_of_payment": "Cash", "account": "Cash - _TC", "amount": 100})
+		pos.append("payments", {"mode_of_payment": "Cash", "amount": 100})
 		pos.save().submit()
 		self.assertEqual(pos.outstanding_amount, 0.0)
 		self.assertEqual(pos.status, "Paid")
@@ -1165,10 +1207,8 @@ class TestSalesInvoice(FrappeTestCase):
 		for tax in taxes:
 			pos.append("taxes", tax)
 
-		pos.append(
-			"payments", {"mode_of_payment": "Bank Draft", "account": "_Test Bank - TCP1", "amount": 50}
-		)
-		pos.append("payments", {"mode_of_payment": "Cash", "account": "Cash - TCP1", "amount": 60})
+		pos.append("payments", {"mode_of_payment": "Bank Draft", "amount": 50})
+		pos.append("payments", {"mode_of_payment": "Cash", "amount": 60})
 
 		pos.insert()
 		pos.submit()
@@ -1811,17 +1851,6 @@ class TestSalesInvoice(FrappeTestCase):
 			for field in expected_gle:
 				self.assertEqual(expected_gle[field], gle[field])
 
-	def test_invoice_exchange_rate(self):
-		si = create_sales_invoice(
-			customer="_Test Customer USD",
-			debit_to="_Test Receivable USD - _TC",
-			currency="USD",
-			conversion_rate=1,
-			do_not_save=1,
-		)
-
-		self.assertRaises(frappe.ValidationError, si.save)
-
 	def test_invalid_currency(self):
 		# Customer currency = USD
 
@@ -1995,7 +2024,7 @@ class TestSalesInvoice(FrappeTestCase):
 
 		# Check if SO is unlinked/replaced by SI in PE & if SO advance paid is 0
 		self.assertEqual(pe.references[0].reference_name, si.name)
-		self.assertEqual(sales_order.advance_paid, 0.0)
+		self.assertEqual(sales_order.advance_paid, 300.0)
 
 		# check outstanding after advance allocation
 		self.assertEqual(
@@ -2172,7 +2201,7 @@ class TestSalesInvoice(FrappeTestCase):
 
 	def test_rounding_adjustment_2(self):
 		si = create_sales_invoice(rate=400, do_not_save=True)
-		for rate in [400, 600, 100]:
+		for rate in [400.25, 600.30, 100.65]:
 			si.append(
 				"items",
 				{
@@ -2198,18 +2227,19 @@ class TestSalesInvoice(FrappeTestCase):
 			)
 		si.save()
 		si.submit()
-		self.assertEqual(si.net_total, 1271.19)
-		self.assertEqual(si.grand_total, 1500)
-		self.assertEqual(si.total_taxes_and_charges, 228.82)
-		self.assertEqual(si.rounding_adjustment, -0.01)
+		self.assertEqual(si.net_total, si.base_net_total)
+		self.assertEqual(si.net_total, 1272.20)
+		self.assertEqual(si.grand_total, 1501.20)
+		self.assertEqual(si.total_taxes_and_charges, 229)
+		self.assertEqual(si.rounding_adjustment, -0.20)
 
 		round_off_account = frappe.get_cached_value("Company", "_Test Company", "round_off_account")
 		expected_values = {
-			"_Test Account Service Tax - _TC": [0.0, 114.41],
-			"_Test Account VAT - _TC": [0.0, 114.41],
-			si.debit_to: [1500, 0.0],
-			round_off_account: [0.01, 0.01],
-			"Sales - _TC": [0.0, 1271.18],
+			"_Test Account Service Tax - _TC": [0.0, 114.50],
+			"_Test Account VAT - _TC": [0.0, 114.50],
+			si.debit_to: [1501, 0.0],
+			round_off_account: [0.20, 0.0],
+			"Sales - _TC": [0.0, 1272.20],
 		}
 
 		gl_entries = frappe.db.sql(
@@ -2267,7 +2297,8 @@ class TestSalesInvoice(FrappeTestCase):
 
 		si.save()
 		si.submit()
-		self.assertEqual(si.net_total, 4007.16)
+		self.assertEqual(si.net_total, si.base_net_total)
+		self.assertEqual(si.net_total, 4007.15)
 		self.assertEqual(si.grand_total, 4488.02)
 		self.assertEqual(si.total_taxes_and_charges, 480.86)
 		self.assertEqual(si.rounding_adjustment, -0.02)
@@ -2280,7 +2311,7 @@ class TestSalesInvoice(FrappeTestCase):
 				["_Test Account Service Tax - _TC", 0.0, 240.43],
 				["_Test Account VAT - _TC", 0.0, 240.43],
 				["Sales - _TC", 0.0, 4007.15],
-				[round_off_account, 0.02, 0.01],
+				[round_off_account, 0.01, 0.0],
 			]
 		)
 
@@ -2466,6 +2497,10 @@ class TestSalesInvoice(FrappeTestCase):
 		for gle in gl_entries:
 			self.assertEqual(expected_values[gle.account]["cost_center"], gle.cost_center)
 
+	@change_settings(
+		"Accounts Settings",
+		{"book_deferred_entries_based_on": "Days", "book_deferred_entries_via_journal_entry": 0},
+	)
 	def test_deferred_revenue(self):
 		deferred_account = create_account(
 			account_name="Deferred Revenue",
@@ -2520,16 +2555,16 @@ class TestSalesInvoice(FrappeTestCase):
 
 		self.assertRaises(frappe.ValidationError, si.save)
 
+	@change_settings(
+		"Accounts Settings",
+		{"book_deferred_entries_based_on": "Months", "book_deferred_entries_via_journal_entry": 0},
+	)
 	def test_fixed_deferred_revenue(self):
 		deferred_account = create_account(
 			account_name="Deferred Revenue",
 			parent_account="Current Liabilities - _TC",
 			company="_Test Company",
 		)
-
-		acc_settings = frappe.get_doc("Accounts Settings", "Accounts Settings")
-		acc_settings.book_deferred_entries_based_on = "Months"
-		acc_settings.save()
 
 		item = create_item("_Test Item for Deferred Accounting")
 		item.enable_deferred_revenue = 1
@@ -2570,9 +2605,61 @@ class TestSalesInvoice(FrappeTestCase):
 
 		check_gl_entries(self, si.name, expected_gle, "2019-01-30")
 
-		acc_settings = frappe.get_doc("Accounts Settings", "Accounts Settings")
-		acc_settings.book_deferred_entries_based_on = "Days"
-		acc_settings.save()
+	def test_validate_inter_company_transaction_address_links(self):
+		def _validate_address_link(address, link_doctype, link_name):
+			return frappe.db.get_value(
+				"Dynamic Link",
+				{
+					"parent": address,
+					"parenttype": "Address",
+					"link_doctype": link_doctype,
+					"link_name": link_name,
+				},
+				"parent",
+			)
+
+		si = create_sales_invoice(
+			company="Wind Power LLC",
+			customer="_Test Internal Customer",
+			debit_to="Debtors - WP",
+			warehouse="Stores - WP",
+			income_account="Sales - WP",
+			expense_account="Cost of Goods Sold - WP",
+			cost_center="Main - WP",
+			currency="USD",
+			do_not_save=1,
+		)
+
+		si.selling_price_list = "_Test Price List Rest of the World"
+		si.submit()
+
+		target_doc = make_inter_company_transaction("Sales Invoice", si.name)
+		target_doc.items[0].update(
+			{
+				"expense_account": "Cost of Goods Sold - _TC1",
+				"cost_center": "Main - _TC1",
+				"warehouse": "Stores - _TC1",
+			}
+		)
+		target_doc.save()
+
+		if target_doc.doctype in ["Purchase Invoice", "Purchase Order"]:
+			for details in [
+				("supplier_address", "Supplier", target_doc.supplier),
+				("dispatch_address", "Company", target_doc.company),
+				("shipping_address", "Company", target_doc.company),
+				("billing_address", "Company", target_doc.company),
+			]:
+				if address := target_doc.get(details[0]):
+					self.assertEqual(address, _validate_address_link(address, details[1], details[2]))
+		else:
+			for details in [
+				("company_address", "Company", target_doc.company),
+				("shipping_address_name", "Customer", target_doc.customer),
+				("customer_address", "Customer", target_doc.customer),
+			]:
+				if address := target_doc.get(details[0]):
+					self.assertEqual(address, _validate_address_link(address, details[1], details[2]))
 
 	def test_inter_company_transaction(self):
 		si = create_sales_invoice(
@@ -2766,7 +2853,9 @@ class TestSalesInvoice(FrappeTestCase):
 		self.assertEqual(si.items[0].rate, rate)
 		self.assertEqual(target_doc.items[0].rate, rate)
 
-		check_gl_entries(self, target_doc.name, pi_gl_entries, add_days(nowdate(), -1))
+		check_gl_entries(
+			self, target_doc.name, pi_gl_entries, add_days(nowdate(), -1), voucher_type="Purchase Invoice"
+		)
 
 	def test_internal_transfer_gl_precision_issues(self):
 		# Make a stock queue of an item with two valuations
@@ -2864,13 +2953,26 @@ class TestSalesInvoice(FrappeTestCase):
 		item.save()
 
 		sales_invoice = create_sales_invoice(item="T Shirt", rate=700, do_not_submit=True)
+		item_tax_map = get_item_tax_map(
+			company=sales_invoice.company,
+			item_tax_template=sales_invoice.items[0].item_tax_template,
+		)
+
 		self.assertEqual(sales_invoice.items[0].item_tax_template, "_Test Account Excise Duty @ 12 - _TC")
+		self.assertEqual(sales_invoice.items[0].item_tax_rate, item_tax_map)
 
 		# Apply discount
 		sales_invoice.apply_discount_on = "Net Total"
 		sales_invoice.discount_amount = 300
 		sales_invoice.save()
+
+		item_tax_map = get_item_tax_map(
+			company=sales_invoice.company,
+			item_tax_template=sales_invoice.items[0].item_tax_template,
+		)
+
 		self.assertEqual(sales_invoice.items[0].item_tax_template, "_Test Account Excise Duty @ 10 - _TC")
+		self.assertEqual(sales_invoice.items[0].item_tax_rate, item_tax_map)
 
 	@change_settings("Selling Settings", {"enable_discount_accounting": 1})
 	def test_sales_invoice_with_discount_accounting_enabled(self):
@@ -2947,6 +3049,28 @@ class TestSalesInvoice(FrappeTestCase):
 		expected_gle = [
 			["_Test Account Sales - _TC", 22.0, 0.0, nowdate()],
 			["Debtors - _TC", 88, 0.0, nowdate()],
+			["Service - _TC", 0.0, 100.0, nowdate()],
+			["TDS Payable - _TC", 0.0, 10.0, nowdate()],
+		]
+
+		check_gl_entries(self, si.name, expected_gle, add_days(nowdate(), -1))
+
+		# cases where distributed discount amount is not set
+		frappe.db.set_value(
+			"Sales Invoice Item",
+			{"name": ["in", [d.name for d in si.items]]},
+			"distributed_discount_amount",
+			0,
+		)
+
+		si.load_from_db()
+		si.additional_discount_account = additional_discount_account
+		# Ledger reposted implicitly upon 'Update After Submit'
+		si.save()
+
+		expected_gle = [
+			["Debtors - _TC", 88, 0.0, nowdate()],
+			["Discount Account - _TC", 22.0, 0.0, nowdate()],
 			["Service - _TC", 0.0, 100.0, nowdate()],
 			["TDS Payable - _TC", 0.0, 10.0, nowdate()],
 		]
@@ -3031,6 +3155,65 @@ class TestSalesInvoice(FrappeTestCase):
 			["2023-06-30", 20000.0, 61366.12, False],
 			["2024-06-30", 20000.0, 81366.12, False],
 			["2025-06-06", 18633.88, 100000.0, False],
+		]
+
+		for i, schedule in enumerate(get_depr_schedule(asset.name, "Active")):
+			self.assertEqual(getdate(expected_values[i][0]), schedule.schedule_date)
+			self.assertEqual(expected_values[i][1], schedule.depreciation_amount)
+			self.assertEqual(expected_values[i][2], schedule.accumulated_depreciation_amount)
+			self.assertEqual(schedule.journal_entry, schedule.journal_entry)
+
+	def test_depreciation_on_cancel_invoice(self):
+		from erpnext.controllers.sales_and_purchase_return import make_return_doc
+
+		create_asset_data()
+
+		asset = create_asset(
+			item_code="Macbook Pro",
+			purchase_date="2020-01-01",
+			available_for_use_date="2023-01-01",
+			depreciation_start_date="2023-04-01",
+			calculate_depreciation=1,
+			submit=1,
+		)
+		post_depreciation_entries()
+
+		si = create_sales_invoice(
+			item_code="Macbook Pro", asset=asset.name, qty=1, rate=10000, posting_date=getdate("2025-05-01")
+		)
+		return_si = make_return_doc("Sales Invoice", si.name)
+		return_si.posting_date = getdate("2025-05-01")
+		return_si.submit()
+		return_si.reload()
+		return_si.cancel()
+
+		asset.load_from_db()
+
+		# Check if the asset schedule is updated while cancel the return invoice
+		expected_values = [
+			["2023-04-01", 4986.30, 4986.30, True],
+			["2024-04-01", 20000.0, 24986.30, True],
+			["2025-04-01", 20000.0, 44986.30, True],
+			["2025-05-01", 1643.84, 46630.14, True],
+		]
+		for i, schedule in enumerate(get_depr_schedule(asset.name, "Active")):
+			self.assertEqual(getdate(expected_values[i][0]), schedule.schedule_date)
+			self.assertEqual(expected_values[i][1], schedule.depreciation_amount)
+			self.assertEqual(expected_values[i][2], schedule.accumulated_depreciation_amount)
+			self.assertEqual(schedule.journal_entry, schedule.journal_entry)
+
+		si.reload()
+		si.cancel()
+		asset.load_from_db()
+
+		# Check if the asset schedule is updated while cancel the sales invoice
+		expected_values = [
+			["2023-04-01", 4986.30, 4986.30, True],
+			["2024-04-01", 20000.0, 24986.30, True],
+			["2025-04-01", 20000.0, 44986.30, True],
+			["2026-04-01", 20000.0, 64986.30, False],
+			["2027-04-01", 20000.0, 84986.30, False],
+			["2028-01-01", 15013.70, 100000.0, False],
 		]
 
 		for i, schedule in enumerate(get_depr_schedule(asset.name, "Active")):
@@ -3333,6 +3516,7 @@ class TestSalesInvoice(FrappeTestCase):
 		si.posting_date = getdate()
 		si.submit()
 
+	@change_settings("Accounts Settings", {"over_billing_allowance": 0})
 	def test_over_billing_case_against_delivery_note(self):
 		"""
 		Test a case where duplicating the item with qty = 1 in the invoice
@@ -3340,24 +3524,23 @@ class TestSalesInvoice(FrappeTestCase):
 		"""
 		from erpnext.stock.doctype.delivery_note.test_delivery_note import create_delivery_note
 
-		over_billing_allowance = frappe.db.get_single_value("Accounts Settings", "over_billing_allowance")
-		frappe.db.set_single_value("Accounts Settings", "over_billing_allowance", 0)
-
 		dn = create_delivery_note()
 		dn.submit()
 
 		si = make_sales_invoice(dn.name)
-		# make a copy of first item and add it to invoice
 		item_copy = frappe.copy_doc(si.items[0])
+		si.save()
+
+		si.items = []  # Clear existing items
 		si.append("items", item_copy)
 		si.save()
 
+		si.append("items", item_copy)
 		with self.assertRaises(frappe.ValidationError) as err:
-			si.submit()
+			si.save()
 
 		self.assertTrue("cannot overbill" in str(err.exception).lower())
-
-		frappe.db.set_single_value("Accounts Settings", "over_billing_allowance", over_billing_allowance)
+		dn.cancel()
 
 	@change_settings(
 		"Accounts Settings",
@@ -3892,10 +4075,8 @@ class TestSalesInvoice(FrappeTestCase):
 		pos = create_sales_invoice(qty=10, do_not_save=True)
 		pos.is_pos = 1
 		pos.pos_profile = pos_profile.name
-		pos.append(
-			"payments", {"mode_of_payment": "Bank Draft", "account": "_Test Bank - _TC", "amount": 500}
-		)
-		pos.append("payments", {"mode_of_payment": "Cash", "account": "Cash - _TC", "amount": 500})
+		pos.append("payments", {"mode_of_payment": "Bank Draft", "amount": 500})
+		pos.append("payments", {"mode_of_payment": "Cash", "amount": 500})
 		pos.save().submit()
 
 		pos_return = make_sales_return(pos.name)
@@ -4005,6 +4186,550 @@ class TestSalesInvoice(FrappeTestCase):
 		si.submit()
 		self.assertEqual(si.remarks, f"Against Customer Order Test PO dated {format_date(nowdate())}")
 
+	def test_gl_voucher_subtype(self):
+		si = create_sales_invoice()
+		gl_entries = frappe.get_all(
+			"GL Entry",
+			filters={"voucher_type": "Sales Invoice", "voucher_no": si.name},
+			pluck="voucher_subtype",
+		)
+
+		self.assertTrue(all([x == "Sales Invoice" for x in gl_entries]))
+
+		si = create_sales_invoice(is_return=1, qty=-1)
+		gl_entries = frappe.get_all(
+			"GL Entry",
+			filters={"voucher_type": "Sales Invoice", "voucher_no": si.name},
+			pluck="voucher_subtype",
+		)
+
+		self.assertTrue(all([x == "Credit Note" for x in gl_entries]))
+
+	def test_validation_on_opening_invoice_with_rounding(self):
+		si = create_sales_invoice(qty=1, rate=99.98, do_not_submit=True)
+		si.is_opening = "Yes"
+		si.items[0].income_account = "Temporary Opening - _TC"
+		si.save()
+		self.assertRaises(frappe.ValidationError, si.submit)
+
+	def _create_opening_roundoff_account(self, company_name):
+		liability_root = frappe.db.get_all(
+			"Account",
+			filters={"company": company_name, "root_type": "Liability", "disabled": 0},
+			order_by="lft",
+			limit=1,
+		)[0]
+
+		# setup round off account
+		if acc := frappe.db.exists(
+			"Account",
+			{
+				"account_name": "Round Off for Opening",
+				"account_type": "Round Off for Opening",
+				"company": company_name,
+			},
+		):
+			frappe.db.set_value("Company", company_name, "round_off_for_opening", acc)
+		else:
+			acc = frappe.new_doc("Account")
+			acc.company = company_name
+			acc.parent_account = liability_root.name
+			acc.account_name = "Round Off for Opening"
+			acc.account_type = "Round Off for Opening"
+			acc.save()
+			frappe.db.set_value("Company", company_name, "round_off_for_opening", acc.name)
+
+	def test_opening_invoice_with_rounding_adjustment(self):
+		si = create_sales_invoice(qty=1, rate=99.98, do_not_submit=True)
+		si.is_opening = "Yes"
+		si.items[0].income_account = "Temporary Opening - _TC"
+		si.save()
+
+		self._create_opening_roundoff_account(si.company)
+
+		si.reload()
+		si.submit()
+		res = frappe.db.get_all(
+			"GL Entry",
+			filters={"voucher_no": si.name, "is_opening": "Yes"},
+			fields=["account", "debit", "credit", "is_opening"],
+		)
+		self.assertEqual(len(res), 3)
+
+	def _create_opening_invoice_with_inclusive_tax(self):
+		si = create_sales_invoice(qty=1, rate=90, do_not_submit=True)
+		si.is_opening = "Yes"
+		si.items[0].income_account = "Temporary Opening - _TC"
+		item_template = si.items[0].as_dict()
+		item_template.name = None
+		item_template.rate = 55
+		si.append("items", item_template)
+		si.append(
+			"taxes",
+			{
+				"charge_type": "On Net Total",
+				"account_head": "_Test Account Service Tax - _TC",
+				"cost_center": "_Test Cost Center - _TC",
+				"description": "Testing...",
+				"rate": 5,
+				"included_in_print_rate": True,
+			},
+		)
+		# there will be 0.01 precision loss between Dr and Cr
+		# caused by 'included_in_print_tax' option
+		si.save()
+		return si
+
+	def test_rounding_validation_for_opening_with_inclusive_tax(self):
+		si = self._create_opening_invoice_with_inclusive_tax()
+		# 'Round Off for Opening' not set in Company master
+		# Ledger level validation must be thrown
+		self.assertRaises(frappe.ValidationError, si.submit)
+
+	def test_ledger_entries_on_opening_invoice_with_rounding_loss_by_inclusive_tax(self):
+		si = self._create_opening_invoice_with_inclusive_tax()
+		# 'Round Off for Opening' is set in Company master
+		self._create_opening_roundoff_account(si.company)
+
+		si.submit()
+		actual = frappe.db.get_all(
+			"GL Entry",
+			filters={"voucher_no": si.name, "is_opening": "Yes", "is_cancelled": False},
+			fields=["account", "debit", "credit", "is_opening"],
+			order_by="account,debit",
+		)
+		expected = [
+			{"account": "_Test Account Service Tax - _TC", "debit": 0.0, "credit": 6.9, "is_opening": "Yes"},
+			{"account": "Debtors - _TC", "debit": 145.0, "credit": 0.0, "is_opening": "Yes"},
+			{"account": "Round Off for Opening - _TC", "debit": 0.0, "credit": 0.01, "is_opening": "Yes"},
+			{"account": "Temporary Opening - _TC", "debit": 0.0, "credit": 138.09, "is_opening": "Yes"},
+		]
+		self.assertEqual(len(actual), 4)
+		self.assertEqual(expected, actual)
+
+	@change_settings("Accounts Settings", {"enable_common_party_accounting": True})
+	def test_common_party_with_different_currency_in_debtor_and_creditor(self):
+		from erpnext.accounts.doctype.account.test_account import create_account
+		from erpnext.accounts.doctype.opening_invoice_creation_tool.test_opening_invoice_creation_tool import (
+			make_customer,
+		)
+		from erpnext.accounts.doctype.party_link.party_link import create_party_link
+		from erpnext.buying.doctype.supplier.test_supplier import create_supplier
+		from erpnext.setup.utils import get_exchange_rate
+
+		creditors = create_account(
+			account_name="Creditors INR",
+			parent_account="Accounts Payable - _TC",
+			company="_Test Company",
+			account_currency="INR",
+			account_type="Payable",
+		)
+		debtors = create_account(
+			account_name="Debtors USD",
+			parent_account="Accounts Receivable - _TC",
+			company="_Test Company",
+			account_currency="USD",
+			account_type="Receivable",
+		)
+
+		# create a customer
+		customer = make_customer(customer="_Test Common Party USD")
+		cust_doc = frappe.get_doc("Customer", customer)
+		cust_doc.default_currency = "USD"
+		test_account_details = {
+			"company": "_Test Company",
+			"account": debtors,
+		}
+		cust_doc.append("accounts", test_account_details)
+		cust_doc.save()
+
+		# create a supplier
+		supplier = create_supplier(supplier_name="_Test Common Party INR").name
+		supp_doc = frappe.get_doc("Supplier", supplier)
+		supp_doc.default_currency = "INR"
+		test_account_details = {
+			"company": "_Test Company",
+			"account": creditors,
+		}
+		supp_doc.append("accounts", test_account_details)
+		supp_doc.save()
+
+		# create a party link between customer & supplier
+		create_party_link("Supplier", supplier, customer)
+
+		# create a sales invoice
+		si = create_sales_invoice(
+			customer=customer,
+			currency="USD",
+			conversion_rate=get_exchange_rate("USD", "INR"),
+			debit_to=debtors,
+			do_not_save=1,
+		)
+		si.party_account_currency = "USD"
+		si.save()
+		si.submit()
+
+		# check outstanding of sales invoice
+		si.reload()
+		self.assertEqual(si.status, "Paid")
+		self.assertEqual(flt(si.outstanding_amount), 0.0)
+
+		# check creation of journal entry
+		jv = frappe.get_all(
+			"Journal Entry Account",
+			{
+				"account": si.debit_to,
+				"party_type": "Customer",
+				"party": si.customer,
+				"reference_type": si.doctype,
+				"reference_name": si.name,
+			},
+			pluck="credit_in_account_currency",
+		)
+		self.assertTrue(jv)
+		self.assertEqual(jv[0], si.grand_total)
+
+	def test_total_billed_amount(self):
+		si = create_sales_invoice(do_not_submit=True)
+
+		project = frappe.new_doc("Project")
+		project.company = "_Test Company"
+		project.project_name = "Test Total Billed Amount"
+		project.save()
+
+		si.project = project.name
+		si.save()
+		si.submit()
+
+		doc = frappe.get_doc("Project", project.name)
+		self.assertEqual(doc.total_billed_amount, si.grand_total)
+
+	def test_total_billed_amount_with_different_projects(self):
+		# This test case is for checking the scenario where project is set at document level and for **some** child items only, not all
+		from copy import copy
+
+		si = create_sales_invoice(do_not_submit=True)
+
+		project = frappe.new_doc("Project")
+		project.company = "_Test Company"
+		project.project_name = "Test Total Billed Amount"
+		project.save()
+
+		si.project = project.name
+		si.items.append(copy(si.items[0]))
+		si.items.append(copy(si.items[0]))
+		si.items[0].project = project.name
+		si.items[1].project = project.name
+		# Not setting project on last item
+		si.items[1].insert()
+		si.items[2].insert()
+		si.submit()
+
+		project.reload()
+		self.assertIsNone(si.items[2].project)
+		self.assertEqual(project.total_billed_amount, 300)
+
+	def test_pos_returns_with_party_account_currency(self):
+		from erpnext.accounts.doctype.sales_invoice.sales_invoice import make_sales_return
+
+		pos_profile = make_pos_profile()
+		pos_profile.payments = []
+		pos_profile.append("payments", {"default": 1, "mode_of_payment": "Cash"})
+		pos_profile.save()
+
+		pos = create_sales_invoice(
+			customer="_Test Customer USD",
+			currency="USD",
+			conversion_rate=86.595000000,
+			qty=2,
+			do_not_save=True,
+		)
+		pos.is_pos = 1
+		pos.pos_profile = pos_profile.name
+		pos.debit_to = "_Test Receivable USD - _TC"
+		pos.append("payments", {"mode_of_payment": "Cash", "amount": 20.35})
+		pos.save().submit()
+
+		pos_return = make_sales_return(pos.name)
+		self.assertEqual(abs(pos_return.payments[0].amount), pos.payments[0].amount)
+
+	def test_create_return_invoice_for_self_update(self):
+		from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
+		from erpnext.accounts.doctype.sales_invoice.test_sales_invoice import create_sales_invoice
+		from erpnext.controllers.sales_and_purchase_return import make_return_doc
+
+		invoice = create_sales_invoice()
+
+		payment_entry = get_payment_entry(dt=invoice.doctype, dn=invoice.name)
+		payment_entry.reference_no = "test001"
+		payment_entry.reference_date = getdate()
+
+		payment_entry.save()
+		payment_entry.submit()
+
+		r_invoice = make_return_doc(invoice.doctype, invoice.name)
+
+		r_invoice.update_outstanding_for_self = 0
+		r_invoice.save()
+
+		self.assertEqual(r_invoice.update_outstanding_for_self, 1)
+
+		r_invoice.submit()
+
+		self.assertNotEqual(r_invoice.outstanding_amount, 0)
+
+		invoice.reload()
+
+		self.assertEqual(invoice.outstanding_amount, 0)
+
+	def test_prevents_fully_returned_invoice_with_zero_quantity(self):
+		from erpnext.controllers.sales_and_purchase_return import StockOverReturnError, make_return_doc
+
+		invoice = create_sales_invoice(qty=10)
+
+		return_doc = make_return_doc(invoice.doctype, invoice.name)
+		return_doc.items[0].qty = -10
+		return_doc.save().submit()
+
+		return_doc = make_return_doc(invoice.doctype, invoice.name)
+		return_doc.items[0].qty = 0
+
+		self.assertRaises(StockOverReturnError, return_doc.save)
+
+	def test_stand_alone_credit_note_valuation(self):
+		from erpnext.stock.doctype.item.test_item import make_item
+
+		item_code = "_Test Item for Credit Note Valuation"
+		make_item_for_si(
+			item_code,
+			{
+				"is_stock_item": 1,
+				"has_batch_no": 1,
+				"create_new_batch": 1,
+				"batch_number_series": "BATCH-TCNV.####",
+			},
+		)
+
+		si = create_sales_invoice(
+			item=item_code,
+			qty=-2,
+			rate=1200,
+			is_return=1,
+			update_stock=1,
+		)
+
+		stock_ledger_entry = frappe.db.get_value(
+			"Stock Ledger Entry",
+			{
+				"voucher_type": "Sales Invoice",
+				"voucher_no": si.name,
+				"item_code": item_code,
+				"warehouse": "_Test Warehouse - _TC",
+			},
+			["incoming_rate", "valuation_rate", "actual_qty as qty", "stock_value_difference"],
+			as_dict=True,
+		)
+
+		self.assertEqual(stock_ledger_entry.incoming_rate, 1200.0)
+		self.assertEqual(stock_ledger_entry.valuation_rate, 1200.0)
+		self.assertEqual(stock_ledger_entry.qty, 2.0)
+		self.assertEqual(stock_ledger_entry.stock_value_difference, 2400.0)
+
+	def test_stand_alone_credit_note_zero_valuation(self):
+		from erpnext.stock.doctype.item.test_item import make_item
+
+		item_code = "_Test Item for Credit Note Zero Valuation"
+		make_item_for_si(
+			item_code,
+			{
+				"is_stock_item": 1,
+				"has_batch_no": 1,
+				"create_new_batch": 1,
+				"batch_number_series": "BATCH-TCNZV.####",
+			},
+		)
+
+		si = create_sales_invoice(
+			item=item_code,
+			qty=-2,
+			rate=1200,
+			is_return=1,
+			update_stock=1,
+			allow_zero_valuation_rate=1,
+		)
+
+		stock_ledger_entry = frappe.db.get_value(
+			"Stock Ledger Entry",
+			{
+				"voucher_type": "Sales Invoice",
+				"voucher_no": si.name,
+				"item_code": item_code,
+				"warehouse": "_Test Warehouse - _TC",
+			},
+			["incoming_rate", "valuation_rate", "actual_qty as qty", "stock_value_difference"],
+			as_dict=True,
+		)
+
+		self.assertEqual(stock_ledger_entry.incoming_rate, 0.0)
+		self.assertEqual(stock_ledger_entry.valuation_rate, 0.0)
+		self.assertEqual(stock_ledger_entry.qty, 2.0)
+		self.assertEqual(stock_ledger_entry.stock_value_difference, 0.0)
+
+	def test_non_batchwise_valuation_for_moving_average(self):
+		from erpnext.stock.doctype.item.test_item import make_item
+
+		item_code = "_Test Item for Non Batchwise Valuation"
+		make_item_for_si(
+			item_code,
+			{
+				"is_stock_item": 1,
+				"has_batch_no": 1,
+				"create_new_batch": 1,
+				"batch_number_series": "TBATCH-TCNV.####",
+				"valuation_method": "Moving Average",
+			},
+		)
+
+		doc = frappe.get_doc("Stock Settings")
+		original_value = cint(doc.do_not_use_batchwise_valuation)
+
+		doc.db_set("do_not_use_batchwise_valuation", 1)
+
+		se = make_stock_entry(
+			item_code=item_code,
+			qty=10,
+			target="_Test Warehouse - _TC",
+			rate=13.02,
+			valuation_method="Moving Average",
+			use_serial_batch_fields=True,
+		)
+
+		se_batch = get_batch_from_bundle(se.items[0].serial_and_batch_bundle)
+
+		# without use serial and batch fields
+		si = create_sales_invoice(
+			item=item_code,
+			qty=1,
+			rate=120,
+			update_stock=1,
+			use_serial_batch_fields=False,
+			warehouse="_Test Warehouse - _TC",
+		)
+
+		si.reload()
+		si_batch = get_batch_from_bundle(si.items[0].serial_and_batch_bundle)
+
+		self.assertEqual(se_batch, si_batch)
+		self.assertEqual(si.items[0].use_serial_batch_fields, 0)
+
+		serial_and_batch_bundle = si.items[0].serial_and_batch_bundle
+		change_in_value = frappe.db.get_value(
+			"Stock Ledger Entry",
+			{
+				"voucher_type": "Sales Invoice",
+				"voucher_no": si.name,
+				"item_code": item_code,
+				"warehouse": "_Test Warehouse - _TC",
+				"serial_and_batch_bundle": serial_and_batch_bundle,
+			},
+			"stock_value_difference",
+		)
+
+		self.assertEqual(change_in_value, 13.02 * -1)
+
+		# with use serial and batch fields
+		si = create_sales_invoice(
+			item=item_code,
+			qty=1,
+			rate=120,
+			update_stock=1,
+			use_serial_batch_fields=True,
+			warehouse="_Test Warehouse - _TC",
+		)
+
+		si.reload()
+
+		self.assertEqual(si.items[0].use_serial_batch_fields, 1)
+
+		serial_and_batch_bundle = si.items[0].serial_and_batch_bundle
+		change_in_value = frappe.db.get_value(
+			"Stock Ledger Entry",
+			{
+				"voucher_type": "Sales Invoice",
+				"voucher_no": si.name,
+				"item_code": item_code,
+				"warehouse": "_Test Warehouse - _TC",
+				"serial_and_batch_bundle": serial_and_batch_bundle,
+			},
+			"stock_value_difference",
+		)
+
+		self.assertEqual(change_in_value, 13.02 * -1)
+
+		doc.db_set("do_not_use_batchwise_valuation", original_value)
+
+	def test_system_generated_exchange_gain_or_loss_je_after_repost(self):
+		from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
+		from erpnext.accounts.doctype.repost_accounting_ledger.test_repost_accounting_ledger import (
+			update_repost_settings,
+		)
+
+		update_repost_settings()
+
+		si = create_sales_invoice(
+			customer="_Test Customer USD",
+			debit_to="_Test Receivable USD - _TC",
+			currency="USD",
+			conversion_rate=80,
+		)
+
+		pe = get_payment_entry("Sales Invoice", si.name)
+		pe.reference_no = "10"
+		pe.reference_date = nowdate()
+		pe.paid_from_account_currency = si.currency
+		pe.paid_to_account_currency = "INR"
+		pe.source_exchange_rate = 85
+		pe.target_exchange_rate = 1
+		pe.paid_amount = si.outstanding_amount
+		pe.insert()
+		pe.submit()
+
+		ral = frappe.new_doc("Repost Accounting Ledger")
+		ral.company = si.company
+		ral.append("vouchers", {"voucher_type": si.doctype, "voucher_no": si.name})
+		ral.save()
+		ral.submit()
+
+		je = frappe.qb.DocType("Journal Entry")
+		jea = frappe.qb.DocType("Journal Entry Account")
+		q = (
+			(
+				frappe.qb.from_(je)
+				.join(jea)
+				.on(je.name == jea.parent)
+				.select(je.docstatus)
+				.where(
+					(je.voucher_type == "Exchange Gain Or Loss")
+					& (jea.reference_name == si.name)
+					& (jea.reference_type == "Sales Invoice")
+					& (je.is_system_generated == 1)
+				)
+			)
+			.limit(1)
+			.run()
+		)
+
+		self.assertEqual(q[0][0], 1)
+
+
+def make_item_for_si(item_code, properties=None):
+	from erpnext.stock.doctype.item.test_item import make_item
+
+	item = make_item(item_code, properties=properties)
+	item.is_stock_item = 1
+	item.save()
+	return item
+
 
 def set_advance_flag(company, flag, default_account):
 	frappe.db.set_value(
@@ -4032,6 +4757,8 @@ def check_gl_entries(doc, voucher_no, expected_gle, posting_date, voucher_type="
 	)
 	gl_entries = q.run(as_dict=True)
 
+	doc.assertGreater(len(gl_entries), 0)
+
 	for i, gle in enumerate(gl_entries):
 		doc.assertEqual(expected_gle[i][0], gle.account)
 		doc.assertEqual(expected_gle[i][1], gle.debit)
@@ -4057,11 +4784,12 @@ def create_sales_invoice(**args):
 	si.conversion_rate = args.conversion_rate or 1
 	si.naming_series = args.naming_series or "T-SINV-"
 	si.cost_center = args.parent_cost_center
+	si.is_internal_customer = args.is_internal_customer or 0
 
 	bundle_id = None
 	if si.update_stock and (args.get("batch_no") or args.get("serial_no")):
 		batches = {}
-		qty = args.qty or 1
+		qty = args.qty if args.qty is not None else 1
 		item_code = args.item or args.item_code or "_Test Item"
 		if args.get("batch_no"):
 			batches = frappe._dict({args.batch_no: qty})
@@ -4093,7 +4821,7 @@ def create_sales_invoice(**args):
 			"description": args.description or "_Test Item",
 			"warehouse": args.warehouse or "_Test Warehouse - _TC",
 			"target_warehouse": args.target_warehouse,
-			"qty": args.qty or 1,
+			"qty": args.qty if args.qty is not None else 1,
 			"uom": args.uom or "Nos",
 			"stock_uom": args.uom or "Nos",
 			"rate": args.rate if args.get("rate") is not None else 100,
@@ -4107,6 +4835,8 @@ def create_sales_invoice(**args):
 			"conversion_factor": args.get("conversion_factor", 1),
 			"incoming_rate": args.incoming_rate or 0,
 			"serial_and_batch_bundle": bundle_id,
+			"allow_zero_valuation_rate": args.allow_zero_valuation_rate or 0,
+			"use_serial_batch_fields": args.use_serial_batch_fields or 0,
 		},
 	)
 
@@ -4257,6 +4987,12 @@ def create_internal_parties():
 		supplier_name="_Test Internal Supplier 2",
 		represents_company="_Test Company with perpetual inventory",
 		allowed_to_interact_with="_Test Company with perpetual inventory",
+	)
+
+	create_internal_supplier(
+		supplier_name="_Test Internal Supplier 3",
+		represents_company="_Test Company",
+		allowed_to_interact_with="_Test Company",
 	)
 
 

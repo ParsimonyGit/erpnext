@@ -24,6 +24,13 @@ frappe.query_reports["Accounts Payable Summary"] = {
 			default: "Due Date",
 		},
 		{
+			fieldname: "calculate_ageing_with",
+			label: __("Calculate Ageing With"),
+			fieldtype: "Select",
+			options: "Report Date\nToday Date",
+			default: "Report Date",
+		},
+		{
 			fieldname: "range",
 			label: __("Ageing Range"),
 			fieldtype: "Data",
@@ -66,6 +73,7 @@ frappe.query_reports["Accounts Payable Summary"] = {
 			fieldname: "party",
 			label: __("Party"),
 			fieldtype: "MultiSelectList",
+			options: "party_type",
 			get_data: function (txt) {
 				if (!frappe.query_report.filters) return;
 

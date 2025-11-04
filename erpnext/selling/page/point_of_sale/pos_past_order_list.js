@@ -96,8 +96,8 @@ erpnext.PointOfSale.PastOrderList = class {
 	}
 
 	get_invoice_html(invoice) {
-		const posting_datetime = moment(invoice.posting_date + " " + invoice.posting_time).format(
-			"Do MMMM, h:mma"
+		const posting_datetime = frappe.datetime.str_to_user(
+			invoice.posting_date + " " + invoice.posting_time
 		);
 		return `<div class="invoice-wrapper" data-invoice-name="${escape(invoice.name)}">
 				<div class="invoice-name-date">
@@ -106,11 +106,11 @@ erpnext.PointOfSale.PastOrderList = class {
 						<svg class="mr-2" width="12" height="12" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
 							<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
 						</svg>
-						${frappe.ellipsis(invoice.customer, 20)}
+						${frappe.ellipsis(invoice.customer_name, 20)}
 					</div>
 				</div>
 				<div class="invoice-total-status">
-					<div class="invoice-total">${format_currency(invoice.grand_total, invoice.currency, 0) || 0}</div>
+					<div class="invoice-total">${format_currency(invoice.grand_total, invoice.currency) || 0}</div>
 					<div class="invoice-date">${posting_datetime}</div>
 				</div>
 			</div>
