@@ -160,6 +160,7 @@
   "language",
   "additional_info_section",
   "is_internal_customer",
+  "ignore_default_payment_terms_template",
   "represents_company",
   "column_break_152",
   "source",
@@ -1665,13 +1666,21 @@
    "fieldtype": "Data",
    "is_virtual": 1,
    "label": "Last Scanned Warehouse"
+  },
+  {
+   "default": "0",
+   "fieldname": "ignore_default_payment_terms_template",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Ignore Default Payment Terms Template",
+   "read_only": 1
   }
  ],
  "icon": "fa fa-file-text",
  "idx": 105,
  "is_submittable": 1,
  "links": [],
- "modified": "2025-07-28 12:14:29.760988",
+ "modified": "2026-03-06 15:33:49.059029",
  "modified_by": "Administrator",
  "module": "Selling",
  "name": "Sales Order",

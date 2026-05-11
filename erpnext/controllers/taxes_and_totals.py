@@ -7,6 +7,7 @@ import json
 import frappe
 from frappe import _, scrub
 from frappe.model.document import Document
+from frappe.query_builder import functions
 from frappe.utils import cint, flt, round_based_on_smallest_currency_fraction
 from frappe.utils.deprecations import deprecated
 
@@ -45,16 +46,22 @@ class calculate_taxes_and_totals:
 		items = list(filter(lambda item: not item.get("is_alternative"), self.doc.get("items")))
 		return items
 
-	def calculate(self):
+	def calculate(self, ignore_tax_template_validation=False):
 		if not len(self.doc.items):
 			return
 
 		self.discount_amount_applied = False
+		self.need_recomputation = False
+		self.ignore_tax_template_validation = ignore_tax_template_validation
+
 		self._calculate()
 
 		if self.doc.meta.get_field("discount_amount"):
 			self.set_discount_amount()
 			self.apply_discount_amount()
+
+		if not ignore_tax_template_validation and self.need_recomputation:
+			return self.calculate(ignore_tax_template_validation=True)
 
 		# Update grand total as per cash and non trade discount
 		if self.doc.apply_discount_on == "Grand Total" and self.doc.get("is_cash_or_non_trade_discount"):
@@ -99,6 +106,9 @@ class calculate_taxes_and_totals:
 			self.doc.base_tax_withholding_net_total = sum_base_net_amount
 
 	def validate_item_tax_template(self):
+		if self.ignore_tax_template_validation:
+			return
+
 		if self.doc.get("is_return") and self.doc.get("return_against"):
 			return
 
@@ -140,6 +150,10 @@ class calculate_taxes_and_totals:
 							)
 						)
 
+						# For correct tax_amount calculation re-computation is required
+						if self.discount_amount_applied and self.doc.apply_discount_on == "Grand Total":
+							self.need_recomputation = True
+
 	def update_item_tax_map(self):
 		for item in self.doc.items:
 			item.item_tax_rate = get_item_tax_map(
@@ -169,8 +183,14 @@ class calculate_taxes_and_totals:
 			return
 
 		if not self.discount_amount_applied:
+			bill_for_rejected_quantity_in_purchase_invoice = frappe.get_single_value(
+				"Buying Settings", "bill_for_rejected_quantity_in_purchase_invoice"
+			)
+
+			do_not_round_fields = ["valuation_rate", "incoming_rate"]
+
 			for item in self.doc.items:
-				self.doc.round_floats_in(item)
+				self.doc.round_floats_in(item, do_not_round_fields=do_not_round_fields)
 
 				if item.discount_percentage == 100:
 					item.rate = 0.0
@@ -224,7 +244,13 @@ class calculate_taxes_and_totals:
 				elif not item.qty and self.doc.get("is_debit_note"):
 					item.amount = flt(item.rate, item.precision("amount"))
 				else:
-					item.amount = flt(item.rate * item.qty, item.precision("amount"))
+					qty = (
+						(item.qty + item.rejected_qty)
+						if bill_for_rejected_quantity_in_purchase_invoice
+						and self.doc.doctype == "Purchase Receipt"
+						else item.qty
+					)
+					item.amount = flt(item.rate * qty, item.precision("amount"))
 
 				item.net_amount = item.amount
 
@@ -356,9 +382,16 @@ class calculate_taxes_and_totals:
 			self.doc.total
 		) = self.doc.base_total = self.doc.net_total = self.doc.base_net_total = 0.0
 
+		bill_for_rejected_quantity_in_purchase_invoice = frappe.get_single_value(
+			"Buying Settings", "bill_for_rejected_quantity_in_purchase_invoice"
+		)
 		for item in self._items:
 			self.doc.total += item.amount
-			self.doc.total_qty += item.qty
+			self.doc.total_qty += (
+				(item.qty + item.rejected_qty)
+				if bill_for_rejected_quantity_in_purchase_invoice and self.doc.doctype == "Purchase Receipt"
+				else item.qty
+			)
 			self.doc.base_total += item.base_amount
 			self.doc.net_total += item.net_amount
 			self.doc.base_net_total += item.base_net_amount
@@ -377,6 +410,9 @@ class calculate_taxes_and_totals:
 			self._calculate()
 
 	def calculate_taxes(self):
+		# reset value from earlier calculations
+		self.grand_total_diff = 0
+
 		doc = self.doc
 		if not doc.get("taxes"):
 			return
@@ -585,8 +621,13 @@ class calculate_taxes_and_totals:
 			else:
 				self.grand_total_diff = 0
 
+			# Apply rounding adjustment to grand_total_for_distributing_discount
+			# to prevent precision errors during discount distribution
+			if hasattr(self, "grand_total_for_distributing_discount") and not self.discount_amount_applied:
+				self.grand_total_for_distributing_discount += self.grand_total_diff
+
 	def calculate_totals(self):
-		grand_total_diff = getattr(self, "grand_total_diff", 0)
+		grand_total_diff = self.grand_total_diff
 
 		if self.doc.get("taxes"):
 			self.doc.grand_total = flt(self.doc.get("taxes")[-1].total) + grand_total_diff
@@ -652,18 +693,17 @@ class calculate_taxes_and_totals:
 		if self.doc.meta.get_field("rounded_total"):
 			if self.doc.is_rounded_total_disabled():
 				self.doc.rounded_total = 0
-				self.doc.base_rounded_total = 0
 				self.doc.rounding_adjustment = 0
-				return
 
-			self.doc.rounded_total = round_based_on_smallest_currency_fraction(
-				self.doc.grand_total, self.doc.currency, self.doc.precision("rounded_total")
-			)
+			else:
+				self.doc.rounded_total = round_based_on_smallest_currency_fraction(
+					self.doc.grand_total, self.doc.currency, self.doc.precision("rounded_total")
+				)
 
-			# rounding adjustment should always be the difference vetween grand and rounded total
-			self.doc.rounding_adjustment = flt(
-				self.doc.rounded_total - self.doc.grand_total, self.doc.precision("rounding_adjustment")
-			)
+				# rounding adjustment should always be the difference between grand and rounded total
+				self.doc.rounding_adjustment = flt(
+					self.doc.rounded_total - self.doc.grand_total, self.doc.precision("rounding_adjustment")
+				)
 
 			self._set_in_company_currency(self.doc, ["rounding_adjustment", "rounded_total"])
 
@@ -685,8 +725,25 @@ class calculate_taxes_and_totals:
 		discount_amount = self.doc.discount_amount or 0
 		grand_total = self.doc.grand_total
 
+		if self.doc.get("is_return") and self.doc.get("return_against"):
+			doctype = frappe.qb.DocType(self.doc.doctype)
+
+			result = (
+				frappe.qb.from_(doctype)
+				.select(functions.Sum(doctype.discount_amount).as_("total_return_discount"))
+				.where(
+					(doctype.return_against == self.doc.return_against)
+					& (doctype.is_return == 1)
+					& (doctype.docstatus == 1)
+				)
+			).run(as_dict=True)
+
+			total_return_discount = abs(result[0].get("total_return_discount") or 0)
+			discount_amount += total_return_discount
+
 		# validate that discount amount cannot exceed the total before discount
-		if (
+		# only during save (i.e. when `_action` is set)
+		if self.doc.get("_action") and (
 			(grand_total >= 0 and discount_amount > grand_total)
 			or (grand_total < 0 and discount_amount < grand_total)  # returns
 		):
@@ -833,12 +890,11 @@ class calculate_taxes_and_totals:
 					)
 				)
 
-			if self.doc.docstatus.is_draft():
-				if self.doc.get("write_off_outstanding_amount_automatically"):
-					self.doc.write_off_amount = 0
+			if self.doc.get("write_off_outstanding_amount_automatically"):
+				self.doc.write_off_amount = 0
 
-				self.calculate_outstanding_amount()
-				self.calculate_write_off_amount()
+			self.calculate_outstanding_amount()
+			self.calculate_write_off_amount()
 
 	def is_internal_invoice(self):
 		"""

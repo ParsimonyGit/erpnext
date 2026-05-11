@@ -50,7 +50,9 @@ class Timesheet(Document):
 		per_billed: DF.Percent
 		sales_invoice: DF.Link | None
 		start_date: DF.Date | None
-		status: DF.Literal["Draft", "Submitted", "Billed", "Payslip", "Completed", "Cancelled"]
+		status: DF.Literal[
+			"Draft", "Submitted", "Partially Billed", "Billed", "Payslip", "Completed", "Cancelled"
+		]
 		time_logs: DF.Table[TimesheetDetail]
 		title: DF.Data | None
 		total_billable_amount: DF.Currency
@@ -125,6 +127,9 @@ class Timesheet(Document):
 
 		if flt(self.per_billed, self.precision("per_billed")) >= 100.0:
 			self.status = "Billed"
+
+		if 0.0 < flt(self.per_billed, self.precision("per_billed")) < 100.0:
+			self.status = "Partially Billed"
 
 		if self.sales_invoice:
 			self.status = "Completed"
@@ -296,6 +301,20 @@ class Timesheet(Document):
 					data.billing_amount = data.billing_rate * hours
 					data.costing_amount = data.costing_rate * costing_hours
 
+					exchange_rate = flt(self.get("exchange_rate")) or 1.0
+					data.base_billing_rate = flt(
+						data.billing_rate * exchange_rate, data.precision("base_billing_rate")
+					)
+					data.base_costing_rate = flt(
+						data.costing_rate * exchange_rate, data.precision("base_costing_rate")
+					)
+					data.base_billing_amount = flt(
+						data.billing_amount * exchange_rate, data.precision("base_billing_amount")
+					)
+					data.base_costing_amount = flt(
+						data.costing_amount * exchange_rate, data.precision("base_costing_amount")
+					)
+
 	def update_time_rates(self, ts_detail):
 		if not ts_detail.is_billable:
 			ts_detail.billing_rate = 0.0
@@ -409,7 +428,9 @@ def get_timesheet_data(name, project):
 
 
 @frappe.whitelist()
-def make_sales_invoice(source_name, item_code=None, customer=None, currency=None):
+def make_sales_invoice(
+	source_name: str, item_code: str | None = None, customer: str | None = None, currency: str | None = None
+):
 	target = frappe.new_doc("Sales Invoice")
 	timesheet = frappe.get_doc("Timesheet", source_name)
 
@@ -438,7 +459,7 @@ def make_sales_invoice(source_name, item_code=None, customer=None, currency=None
 		target.append("items", {"item_code": item_code, "qty": hours, "rate": billing_rate})
 
 	for time_log in timesheet.time_logs:
-		if time_log.is_billable:
+		if time_log.is_billable and not time_log.sales_invoice:
 			target.append(
 				"timesheets",
 				{

@@ -327,7 +327,7 @@ class BuyingController(SubcontractingController):
 				last_item_idx = d.idx
 
 		total_valuation_amount = sum(
-			flt(d.base_tax_amount_after_discount_amount)
+			flt(d.base_tax_amount_after_discount_amount) * (-1 if d.get("add_deduct_tax") == "Deduct" else 1)
 			for d in self.get("taxes")
 			if d.category in ["Valuation", "Valuation and Total"]
 		)
@@ -364,7 +364,17 @@ class BuyingController(SubcontractingController):
 						get_conversion_factor(item.item_code, item.uom).get("conversion_factor") or 1.0
 					)
 
-				net_rate = item.base_net_amount
+				net_rate = (
+					flt(
+						(item.base_net_amount / item.received_qty) * item.qty,
+						item.precision("base_net_amount"),
+					)
+					if item.received_qty
+					and frappe.get_single_value(
+						"Buying Settings", "bill_for_rejected_quantity_in_purchase_invoice"
+					)
+					else item.base_net_amount
+				)
 				if item.sales_incoming_rate:  # for internal transfer
 					net_rate = item.qty * item.sales_incoming_rate
 
@@ -626,7 +636,9 @@ class BuyingController(SubcontractingController):
 								or self.is_return
 								or (self.is_internal_transfer() and self.docstatus == 2)
 								else self.get_package_for_target_warehouse(
-									d, type_of_transaction=type_of_transaction
+									d,
+									type_of_transaction=type_of_transaction,
+									via_landed_cost_voucher=via_landed_cost_voucher,
 								)
 							),
 						},
@@ -714,7 +726,22 @@ class BuyingController(SubcontractingController):
 			via_landed_cost_voucher=via_landed_cost_voucher,
 		)
 
-	def get_package_for_target_warehouse(self, item, warehouse=None, type_of_transaction=None) -> str:
+	def get_package_for_target_warehouse(
+		self, item, warehouse=None, type_of_transaction=None, via_landed_cost_voucher=None
+	) -> str:
+		if via_landed_cost_voucher and item.get("warehouse"):
+			if sabb := frappe.db.get_value(
+				"Serial and Batch Bundle",
+				{
+					"voucher_detail_no": item.name,
+					"warehouse": item.get("warehouse"),
+					"docstatus": 1,
+					"is_cancelled": 0,
+				},
+				"name",
+			):
+				return sabb
+
 		if not item.serial_and_batch_bundle:
 			return ""
 
